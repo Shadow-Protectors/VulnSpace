@@ -1,6 +1,7 @@
 package com.vulnspace.app.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -13,6 +14,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,12 +43,17 @@ fun WelcomeScreen(
         ) {
             Spacer(Modifier.height(72.dp))
 
-            // Logo mark
+            // Logo mark (Secret admin login via long press)
             Box(
                 modifier = Modifier
                     .size(88.dp)
                     .clip(RoundedCornerShape(24.dp))
-                    .background(PrimaryBlue),
+                    .background(PrimaryBlue)
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onLongPress = { onSignIn() }
+                        )
+                    },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -118,15 +125,6 @@ fun WelcomeScreen(
             )
 
             Spacer(Modifier.height(32.dp))
-
-            // Sign in link for admins/heads
-            TextButton(onClick = onSignIn) {
-                Text(
-                    text = "Already a member or head? Sign in",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = PrimaryBlue
-                )
-            }
 
             Spacer(Modifier.height(32.dp))
         }

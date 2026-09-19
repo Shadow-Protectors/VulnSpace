@@ -21,6 +21,7 @@ object Destinations {
     // Auth / Onboarding
     const val WELCOME = "welcome"
     const val JOIN_COMMUNITY = "join_community"
+    const val SIGN_IN = "sign_in"
     const val USERNAME_SETUP = "username_setup/{inviteCode}"
     fun usernameSetup(inviteCode: String) = "username_setup/$inviteCode"
 

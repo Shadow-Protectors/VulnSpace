@@ -21,6 +21,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -317,6 +319,7 @@ fun OutlinedCyberTextField(
     maxLines: Int = 1,
     isError: Boolean = false,
     errorMessage: String? = null,
+    isPassword: Boolean = false,
     enabled: Boolean = true
 ) {
     Column(modifier = modifier) {
@@ -335,6 +338,7 @@ fun OutlinedCyberTextField(
             isError = isError,
             enabled = enabled,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = PrimaryBlue,
                 unfocusedBorderColor = BlueBorder,

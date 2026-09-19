@@ -99,7 +99,20 @@ private fun AuthNavGraph(onSessionResolved: () -> Unit) {
             WelcomeScreen(
                 onJoinCommunity = { navController.navigate(Destinations.JOIN_COMMUNITY) },
                 onApplyAsHead = { navController.navigate(Destinations.HEAD_APPLICATION_FORM) },
-                onSignIn = { /* TODO: email/password sign-in for heads/admins */ }
+                onSignIn = { navController.navigate(Destinations.SIGN_IN) }
+            )
+        }
+        composable(Destinations.SIGN_IN) {
+            val signInVm: SignInViewModel = viewModel()
+            val signInState by signInVm.uiState.collectAsStateWithLifecycle()
+            SignInScreen(
+                state = signInState,
+                onEmailChange = signInVm::onEmailChange,
+                onPasswordChange = signInVm::onPasswordChange,
+                onSubmit = {
+                    signInVm.signIn(onSuccess = onSessionResolved)
+                },
+                onBack = { navController.popBackStack() }
             )
         }
         composable(Destinations.JOIN_COMMUNITY) {
