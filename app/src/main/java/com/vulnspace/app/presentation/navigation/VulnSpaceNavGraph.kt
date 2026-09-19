@@ -17,6 +17,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.vulnspace.app.domain.model.*
+import com.vulnspace.app.presentation.viewmodel.HeadConsoleViewModel
 import com.vulnspace.app.presentation.viewmodel.*
 import com.vulnspace.app.ui.components.BottomNavigationBar
 import com.vulnspace.app.ui.screens.*
