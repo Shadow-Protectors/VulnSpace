@@ -65,3 +65,7 @@ supabase/migrations/
 /plan
 .agent/
 .env
+local.properties
+*.apk
+build/
+app/build/
