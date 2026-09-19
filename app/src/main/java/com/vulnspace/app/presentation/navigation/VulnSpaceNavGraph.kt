@@ -425,18 +425,14 @@ private fun AdminNavGraph(userId: String, onSignOut: () -> Unit) {
 
     NavHost(navController = navController, startDestination = Destinations.ADMIN_DASHBOARD) {
         composable(Destinations.ADMIN_DASHBOARD) {
-            val stats by adminVm.stats.collectAsStateWithLifecycle()
-            val isLoading by adminVm.isStatsLoading.collectAsStateWithLifecycle()
-            val errorMessage by adminVm.errorMessage.collectAsStateWithLifecycle()
+            val state by adminVm.dashboardState.collectAsStateWithLifecycle()
             
             LaunchedEffect(Unit) {
                 adminVm.loadDashboardStats()
             }
 
             AdminDashboardScreen(
-                stats = stats,
-                isLoading = isLoading,
-                errorMessage = errorMessage,
+                state = state,
                 onRefresh = adminVm::loadDashboardStats,
                 onApplicationsClick = { navController.navigate(Destinations.HEAD_APPLICATIONS) },
                 onCommunitiesClick = { navController.navigate(Destinations.COMMUNITIES) },

@@ -31,11 +31,14 @@ serve(async (req: Request) => {
     // Extract auth header to identify the caller
     const authHeader = req.headers.get("Authorization")
     if (!authHeader) {
-      throw new Error("Missing Authorization header")
+      return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
+        headers,
+        status: 401,
+      })
     }
 
     // Get the user from the auth token
-    const token = authHeader.replace("Bearer ", "")
+    const token = authHeader.replace("Bearer ", "").trim()
     const { data: { user }, error: userError } = await supabase.auth.getUser(token)
     if (userError || !user) {
       return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
@@ -58,11 +61,15 @@ serve(async (req: Request) => {
       })
     }
 
-    // Parse the request body (application ID and action: 'APPROVE' or 'REJECT')
-    const { application_id, action, rejection_reason } = await req.json()
+    // Parse the request body
+    const body = await req.json().catch(() => ({}))
+    const applicationId = body.applicationId || body.application_id
+    const rawAction = body.action || ""
+    const action = rawAction.toUpperCase()
+    const rejectionReason = body.reason || body.rejection_reason || "Does not meet community guidelines"
 
-    if (!application_id || !["APPROVE", "REJECT"].includes(action)) {
-      return new Response(JSON.stringify({ error: "Invalid payload: application_id and valid action required" }), {
+    if (!applicationId || !["APPROVE", "REJECT"].includes(action)) {
+      return new Response(JSON.stringify({ error: "Invalid payload: applicationId and action ('APPROVE' or 'REJECT') required" }), {
         headers,
         status: 400,
       })
@@ -72,7 +79,7 @@ serve(async (req: Request) => {
     const { data: application, error: fetchError } = await supabase
       .from("head_applications")
       .select("*")
-      .eq("id", application_id)
+      .eq("id", applicationId)
       .single()
 
     if (fetchError || !application) {
@@ -84,14 +91,22 @@ serve(async (req: Request) => {
 
     // Idempotency: check if already resolved
     if (application.status === "APPROVED") {
-      return new Response(JSON.stringify({ message: "Application is already approved", status: "APPROVED" }), {
+      return new Response(JSON.stringify({ 
+        message: "Application is already approved", 
+        status: "APPROVED",
+        application_id: applicationId
+      }), {
         headers,
         status: 200,
       })
     }
 
     if (application.status === "REJECTED" && action === "REJECT") {
-      return new Response(JSON.stringify({ message: "Application is already rejected", status: "REJECTED" }), {
+      return new Response(JSON.stringify({ 
+        message: "Application is already rejected", 
+        status: "REJECTED",
+        application_id: applicationId
+      }), {
         headers,
         status: 200,
       })
@@ -135,27 +150,43 @@ serve(async (req: Request) => {
         must_change_password: true,
       }, { onConflict: "id" })
 
-      // 3. Create the community
-      const { data: newCommunity, error: communityError } = await supabase
+      // 3. Create or activate the community
+      let communityId: string | null = null
+      const { data: existingCommunity } = await supabase
         .from("communities")
-        .insert({
-          name: application.proposed_community_name,
-          description: application.proposed_description,
-          created_by: applicantUserId,
-          status: "ACTIVE",
-        })
-        .select()
-        .single()
+        .select("id")
+        .eq("name", application.proposed_community_name)
+        .maybeSingle()
 
-      if (communityError || !newCommunity) {
-        throw new Error(`Failed to create community: ${communityError?.message}`)
+      if (existingCommunity) {
+        communityId = existingCommunity.id
+        await supabase
+          .from("communities")
+          .update({ status: "ACTIVE", created_by: applicantUserId })
+          .eq("id", communityId)
+      } else {
+        const { data: newCommunity, error: communityError } = await supabase
+          .from("communities")
+          .insert({
+            name: application.proposed_community_name,
+            description: application.proposed_description,
+            created_by: applicantUserId,
+            status: "ACTIVE",
+          })
+          .select()
+          .single()
+
+        if (communityError || !newCommunity) {
+          throw new Error(`Failed to create community: ${communityError?.message}`)
+        }
+        communityId = newCommunity.id
       }
 
       // 4. Assign Community Head role
       await supabase
         .from("community_members")
         .upsert({
-          community_id: newCommunity.id,
+          community_id: communityId,
           user_id: applicantUserId,
           username: application.full_name,
           role: "COMMUNITY_HEAD",
@@ -172,33 +203,33 @@ serve(async (req: Request) => {
           applicant_user_id: applicantUserId,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", application_id)
+        .eq("id", applicationId)
 
       // 6. Insert Audit Log
       await supabase.from("audit_logs").insert({
         actor_id: user.id,
         action: "COMMUNITY_HEAD_APPLICATION_APPROVED",
         target_type: "HEAD_APPLICATION",
-        target_id: application_id,
-        community_id: newCommunity.id,
+        target_id: applicationId,
+        community_id: communityId,
         metadata: {
           applicant_email: application.email,
           applicant_user_id: applicantUserId,
-          community_name: newCommunity.name,
+          community_name: application.proposed_community_name,
         },
       })
 
       // 7. Insert In-app Notification for the applicant
       await supabase.from("notifications").insert({
         recipient_user_id: applicantUserId,
-        application_id: application_id,
-        community_id: newCommunity.id,
+        application_id: applicationId,
+        community_id: communityId,
         title: "Community application approved",
         body: "Your application was approved. Check your email for login instructions.",
         type: "HEAD_APPLICATION_APPROVED",
       })
 
-      // 8. Handle Email notification if RESEND_API_KEY is present
+      // 8. Handle Email notification (provider failure does NOT rollback approval)
       const resendApiKey = Deno.env.get("RESEND_API_KEY")
       let emailStatus = "NOT_SENT"
       let errorMessage: string | null = null
@@ -216,7 +247,7 @@ serve(async (req: Request) => {
               from: "VulnSpace <no-reply@vulnspace.org>",
               to: [application.email],
               subject: "Your VulnSpace community application was approved",
-              text: `Hello ${application.full_name},\n\nYour application to create the cybersecurity community '${newCommunity.name}' has been approved.\n\nLogin email:\n${application.email}\n\nUse the VulnSpace app to sign in. You will be prompted to set up your password during your first login.\n\nWelcome to VulnSpace!`,
+              text: `Hello ${application.full_name},\n\nYour application to create the cybersecurity community '${application.proposed_community_name}' has been approved.\n\nLogin email:\n${application.email}\n\nUse the VulnSpace app to sign in. You will be prompted to set up your password during your first login.\n\nWelcome to VulnSpace!`,
             }),
           })
           const emailJson = await emailRes.json().catch(() => null)
@@ -237,7 +268,7 @@ serve(async (req: Request) => {
       await supabase.from("email_deliveries").insert({
         recipient_email: application.email,
         recipient_user_id: applicantUserId,
-        application_id: application_id,
+        application_id: applicationId,
         email_type: "HEAD_APPLICATION_APPROVED",
         status: emailStatus,
         provider_message_id: providerMessageId,
@@ -246,8 +277,11 @@ serve(async (req: Request) => {
       }).catch((e: any) => console.error("Failed to record email delivery:", e))
 
       return new Response(JSON.stringify({
-        message: "Application approved successfully and community created",
-        community_id: newCommunity.id,
+        message: emailStatus === "FAILED" 
+          ? "Application approved, but email delivery failed." 
+          : "Application approved successfully and community created",
+        status: "APPROVED",
+        community_id: communityId,
         applicant_user_id: applicantUserId,
         email_status: emailStatus,
       }), { headers, status: 200 })
@@ -260,20 +294,20 @@ serve(async (req: Request) => {
           status: "REJECTED",
           approved_by: user.id,
           approved_at: new Date().toISOString(),
-          rejection_reason: rejection_reason || "Does not meet community guidelines",
+          rejection_reason: rejectionReason,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", application_id)
+        .eq("id", applicationId)
 
       // Insert Audit Log
       await supabase.from("audit_logs").insert({
         actor_id: user.id,
         action: "COMMUNITY_HEAD_APPLICATION_REJECTED",
         target_type: "HEAD_APPLICATION",
-        target_id: application_id,
+        target_id: applicationId,
         metadata: {
           applicant_email: application.email,
-          reason: rejection_reason,
+          reason: rejectionReason,
         },
       })
 
@@ -281,14 +315,16 @@ serve(async (req: Request) => {
       if (application.applicant_user_id) {
         await supabase.from("notifications").insert({
           recipient_user_id: application.applicant_user_id,
+          application_id: applicationId,
           title: "Community Application Update",
-          body: `Your community application was not approved: ${rejection_reason || "Please contact platform support."}`,
+          body: `Your community application was not approved: ${rejectionReason}`,
         })
       }
 
       return new Response(JSON.stringify({
         message: "Application rejected successfully",
-        application_id,
+        status: "REJECTED",
+        application_id: applicationId,
       }), { headers, status: 200 })
     }
 

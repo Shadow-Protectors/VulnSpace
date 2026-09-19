@@ -60,7 +60,8 @@ google-services.json
 
 # Supabase
 supabase/.temp/
-supabase/migrations/
+!supabase/migrations/
+!supabase/migrations/*.sql
 
 # Custom exclusions
 /plan

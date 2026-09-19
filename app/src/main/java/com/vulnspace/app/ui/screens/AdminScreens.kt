@@ -31,11 +31,16 @@ data class AdminStats(
     val totalMembers: Int = 0
 )
 
+sealed interface DashboardState {
+    data object Loading : DashboardState
+    data class Loaded(val stats: AdminStats) : DashboardState
+    data object Empty : DashboardState
+    data class Error(val message: String) : DashboardState
+}
+
 @Composable
 fun AdminDashboardScreen(
-    stats: AdminStats,
-    isLoading: Boolean,
-    errorMessage: String? = null,
+    state: DashboardState,
     onRefresh: () -> Unit = {},
     onApplicationsClick: () -> Unit,
     onCommunitiesClick: () -> Unit,
@@ -58,106 +63,184 @@ fun AdminDashboardScreen(
             )
             HorizontalDivider(color = BlueBorder)
 
-            if (errorMessage != null) {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = DangerRed.copy(alpha = 0.1f)),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed)
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Filled.Error, contentDescription = null, tint = DangerRed)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Database Query Error", style = MaterialTheme.typography.titleSmall, color = DangerRed)
+            when (state) {
+                is DashboardState.Loading -> {
+                    LoadingState(modifier = Modifier.fillMaxSize())
+                }
+                is DashboardState.Error -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = DangerRed.copy(alpha = 0.08f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed.copy(alpha = 0.5f))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = DangerRed, modifier = Modifier.size(36.dp))
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    text = "Unable to load dashboard statistics.",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = DangerRed
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = state.message.ifBlank { "Please check your network and privileges, then try again." },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                                Spacer(Modifier.height(16.dp))
+                                PrimaryCyberButton(
+                                    text = "Retry",
+                                    onClick = onRefresh,
+                                    leadingIcon = Icons.Filled.Refresh
+                                )
+                            }
                         }
-                        Spacer(Modifier.height(4.dp))
-                        Text(errorMessage, style = MaterialTheme.typography.bodySmall, color = TextPrimary)
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(onClick = onRefresh) {
-                            Text("Retry Query")
-                        }
                     }
                 }
-            }
-
-            if (isLoading) { LoadingState(modifier = Modifier.fillMaxSize()); return@Column }
-
-            LazyColumn(
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // Stats grid
-                item {
-                    Text("Platform Overview", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
-                    Spacer(Modifier.height(10.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatCard(
-                            label = "Pending",
-                            value = stats.pendingApplications.toString(),
-                            icon = Icons.Filled.HourglassEmpty,
-                            highlight = stats.pendingApplications > 0,
-                            modifier = Modifier.weight(1f)
-                        )
-                        StatCard(
-                            label = "Communities",
-                            value = stats.activeCommunities.toString(),
-                            icon = Icons.Filled.Shield,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatCard(
-                            label = "Heads",
-                            value = stats.activeHeads.toString(),
-                            icon = Icons.Filled.AdminPanelSettings,
-                            modifier = Modifier.weight(1f)
-                        )
-                        StatCard(
-                            label = "Members",
-                            value = stats.totalMembers.toString(),
-                            icon = Icons.Filled.Group,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-
-                // Quick actions
-                item {
-                    Spacer(Modifier.height(4.dp))
-                    Text("Actions", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(10.dp))
-                }
-                item {
-                    AdminMenuCard(
-                        icon = Icons.Filled.Assignment,
-                        title = "Head Applications",
-                        badge = if (stats.pendingApplications > 0) stats.pendingApplications.toString() else null,
-                        onClick = onApplicationsClick
+                is DashboardState.Empty -> {
+                    val emptyStats = AdminStats()
+                    DashboardContent(
+                        stats = emptyStats,
+                        onApplicationsClick = onApplicationsClick,
+                        onCommunitiesClick = onCommunitiesClick,
+                        onAuditLogsClick = onAuditLogsClick,
+                        onSignOut = onSignOut
                     )
                 }
-                item {
-                    AdminMenuCard(
-                        icon = Icons.Filled.Shield,
-                        title = "Communities",
-                        onClick = onCommunitiesClick
-                    )
-                }
-                item {
-                    AdminMenuCard(
-                        icon = Icons.Filled.History,
-                        title = "Audit Logs",
-                        onClick = onAuditLogsClick
-                    )
-                }
-                item {
-                    AdminMenuCard(
-                        icon = Icons.AutoMirrored.Filled.Logout,
-                        title = "Sign Out",
-                        onClick = onSignOut
+                is DashboardState.Loaded -> {
+                    DashboardContent(
+                        stats = state.stats,
+                        onApplicationsClick = onApplicationsClick,
+                        onCommunitiesClick = onCommunitiesClick,
+                        onAuditLogsClick = onAuditLogsClick,
+                        onSignOut = onSignOut
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun AdminDashboardScreen(
+    stats: AdminStats,
+    isLoading: Boolean,
+    errorMessage: String? = null,
+    onRefresh: () -> Unit = {},
+    onApplicationsClick: () -> Unit,
+    onCommunitiesClick: () -> Unit,
+    onAuditLogsClick: () -> Unit,
+    onSignOut: () -> Unit
+) {
+    val state = when {
+        isLoading -> DashboardState.Loading
+        errorMessage != null -> DashboardState.Error(errorMessage)
+        stats.pendingApplications == 0 && stats.activeCommunities == 0 && stats.activeHeads == 0 && stats.totalMembers == 0 -> DashboardState.Empty
+        else -> DashboardState.Loaded(stats)
+    }
+    AdminDashboardScreen(
+        state = state,
+        onRefresh = onRefresh,
+        onApplicationsClick = onApplicationsClick,
+        onCommunitiesClick = onCommunitiesClick,
+        onAuditLogsClick = onAuditLogsClick,
+        onSignOut = onSignOut
+    )
+}
+
+@Composable
+private fun DashboardContent(
+    stats: AdminStats,
+    onApplicationsClick: () -> Unit,
+    onCommunitiesClick: () -> Unit,
+    onAuditLogsClick: () -> Unit,
+    onSignOut: () -> Unit
+) {
+    LazyColumn(
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Stats grid
+        item {
+            Text("Platform Overview", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatCard(
+                    label = "Pending",
+                    value = stats.pendingApplications.toString(),
+                    icon = Icons.Filled.HourglassEmpty,
+                    highlight = stats.pendingApplications > 0,
+                    modifier = Modifier.weight(1f)
+                )
+                StatCard(
+                    label = "Communities",
+                    value = stats.activeCommunities.toString(),
+                    icon = Icons.Filled.Shield,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatCard(
+                    label = "Heads",
+                    value = stats.activeHeads.toString(),
+                    icon = Icons.Filled.AdminPanelSettings,
+                    modifier = Modifier.weight(1f)
+                )
+                StatCard(
+                    label = "Members",
+                    value = stats.totalMembers.toString(),
+                    icon = Icons.Filled.Group,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // Quick actions
+        item {
+            Spacer(Modifier.height(4.dp))
+            Text("Actions", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(10.dp))
+        }
+        item {
+            AdminMenuCard(
+                icon = Icons.Filled.Assignment,
+                title = "Head Applications",
+                badge = if (stats.pendingApplications > 0) stats.pendingApplications.toString() else null,
+                onClick = onApplicationsClick
+            )
+        }
+        item {
+            AdminMenuCard(
+                icon = Icons.Filled.Shield,
+                title = "Communities",
+                onClick = onCommunitiesClick
+            )
+        }
+        item {
+            AdminMenuCard(
+                icon = Icons.Filled.History,
+                title = "Audit Logs",
+                onClick = onAuditLogsClick
+            )
+        }
+        item {
+            AdminMenuCard(
+                icon = Icons.AutoMirrored.Filled.Logout,
+                title = "Sign Out",
+                onClick = onSignOut
+            )
         }
     }
 }
@@ -257,15 +340,20 @@ fun HeadApplicationsScreen(
             }
 
             if (actionMessage != null) {
+                val isEmailWarning = actionMessage.contains("email", ignoreCase = true) && actionMessage.contains("failed", ignoreCase = true)
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = SuccessGreen.copy(alpha = 0.15f)),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, SuccessGreen)
+                    colors = CardDefaults.cardColors(containerColor = if (isEmailWarning) WarningBackground else SuccessGreen.copy(alpha = 0.15f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (isEmailWarning) WarningAmber else SuccessGreen)
                 ) {
                     Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = SuccessGreen)
+                        Icon(
+                            if (isEmailWarning) Icons.Filled.Warning else Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = if (isEmailWarning) WarningAmber else SuccessGreen
+                        )
                         Spacer(Modifier.width(8.dp))
-                        Text(actionMessage, style = MaterialTheme.typography.bodyMedium, color = SuccessGreen)
+                        Text(actionMessage, style = MaterialTheme.typography.bodyMedium, color = if (isEmailWarning) WarningAmber else SuccessGreen)
                     }
                 }
             }
