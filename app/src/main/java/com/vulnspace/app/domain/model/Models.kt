@@ -2,6 +2,7 @@ package com.vulnspace.app.domain.model
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.json.JsonElement
 
 @Serializable
 data class Community(
@@ -9,19 +10,19 @@ data class Community(
     val name: String,
     val description: String? = null,
     val status: String = "ACTIVE", // ACTIVE, SUSPENDED, ARCHIVED
-    val headUserId: String? = null,
+    @SerialName("created_by") val headUserId: String? = null,
     val memberCount: Int = 0,
-    val createdAt: String = ""
+    @SerialName("created_at") val createdAt: String = ""
 )
 
 @Serializable
 data class Member(
     val id: String,
-    val userId: String,
-    val communityId: String,
+    @SerialName("user_id") val userId: String,
+    @SerialName("community_id") val communityId: String,
     val username: String,
-    val role: String = "MEMBER", // MEMBER, COMMUNITY_HEAD
-    val joinedAt: String = ""
+    val role: String = "MEMBER", // MEMBER, HEAD, COMMUNITY_HEAD
+    @SerialName("joined_at") val joinedAt: String = ""
 )
 
 @Serializable
@@ -39,20 +40,22 @@ data class InviteLink(
 @Serializable
 data class AppNotification(
     val id: String,
-    val userId: String,
+    @SerialName("recipient_user_id") val userId: String = "",
     val title: String,
     val body: String,
-    val isRead: Boolean = false,
-    val createdAt: String = ""
-)
+    @SerialName("read_at") val readAt: String? = null,
+    @SerialName("created_at") val createdAt: String = ""
+) {
+    val isRead: Boolean get() = readAt != null
+}
 
 @Serializable
 data class AuditLog(
     val id: String,
-    val actorUserId: String,
+    @SerialName("actor_id") val actorUserId: String = "",
     val actorUsername: String? = null,
     val action: String,
-    val target: String? = null,
-    val metadata: String? = null,
-    val createdAt: String = ""
+    @SerialName("target_type") val target: String? = null,
+    val metadata: JsonElement? = null,
+    @SerialName("created_at") val createdAt: String = ""
 )

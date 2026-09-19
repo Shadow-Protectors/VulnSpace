@@ -27,7 +27,8 @@ import com.vulnspace.app.ui.theme.*
 fun WelcomeScreen(
     onJoinCommunity: () -> Unit,
     onApplyAsHead: () -> Unit,
-    onSignIn: () -> Unit
+    onHeadLogin: () -> Unit,
+    onAdminLogin: () -> Unit
 ) {
     Box(
         modifier = Modifier
@@ -43,7 +44,7 @@ fun WelcomeScreen(
         ) {
             Spacer(Modifier.height(72.dp))
 
-            // Logo mark (Secret admin login via long press)
+            // Logo mark (Double-click to access hidden Platform Admin Login)
             Box(
                 modifier = Modifier
                     .size(88.dp)
@@ -51,7 +52,7 @@ fun WelcomeScreen(
                     .background(PrimaryBlue)
                     .pointerInput(Unit) {
                         detectTapGestures(
-                            onLongPress = { onSignIn() }
+                            onDoubleTap = { onAdminLogin() }
                         )
                     },
                 contentAlignment = Alignment.Center
@@ -122,6 +123,15 @@ fun WelcomeScreen(
                 onClick = onApplyAsHead,
                 modifier = Modifier.fillMaxWidth(),
                 leadingIcon = Icons.Filled.AdminPanelSettings
+            )
+            
+            Spacer(Modifier.height(12.dp))
+            
+            SecondaryCyberButton(
+                text = "Community Head Login",
+                onClick = onHeadLogin,
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = Icons.Filled.Login
             )
 
             Spacer(Modifier.height(32.dp))

@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -34,14 +35,50 @@ data class AdminStats(
 fun AdminDashboardScreen(
     stats: AdminStats,
     isLoading: Boolean,
+    errorMessage: String? = null,
+    onRefresh: () -> Unit = {},
     onApplicationsClick: () -> Unit,
     onCommunitiesClick: () -> Unit,
-    onAuditLogsClick: () -> Unit
+    onAuditLogsClick: () -> Unit,
+    onSignOut: () -> Unit
 ) {
     Box(modifier = Modifier.fillMaxSize().background(AppBackground)) {
         Column {
-            CyberTopBar(title = "Admin Dashboard", subtitle = "Platform Administration")
+            CyberTopBar(
+                title = "Admin Dashboard",
+                subtitle = "Platform Administration",
+                actions = {
+                    IconButton(onClick = onRefresh) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = TextPrimary)
+                    }
+                    IconButton(onClick = onSignOut) {
+                        Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Sign Out", tint = DangerRed)
+                    }
+                }
+            )
             HorizontalDivider(color = BlueBorder)
+
+            if (errorMessage != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = DangerRed.copy(alpha = 0.1f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Error, contentDescription = null, tint = DangerRed)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Database Query Error", style = MaterialTheme.typography.titleSmall, color = DangerRed)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(errorMessage, style = MaterialTheme.typography.bodySmall, color = TextPrimary)
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(onClick = onRefresh) {
+                            Text("Retry Query")
+                        }
+                    }
+                }
+            }
 
             if (isLoading) { LoadingState(modifier = Modifier.fillMaxSize()); return@Column }
 
@@ -113,6 +150,13 @@ fun AdminDashboardScreen(
                         onClick = onAuditLogsClick
                     )
                 }
+                item {
+                    AdminMenuCard(
+                        icon = Icons.AutoMirrored.Filled.Logout,
+                        title = "Sign Out",
+                        onClick = onSignOut
+                    )
+                }
             }
         }
     }
@@ -166,6 +210,9 @@ private fun AdminMenuCard(
 fun HeadApplicationsScreen(
     applications: List<HeadApplication>,
     isLoading: Boolean,
+    errorMessage: String? = null,
+    actionMessage: String? = null,
+    onRefresh: () -> Unit = {},
     onApprove: (String) -> Unit,
     onReject: (String, String) -> Unit,
     onBack: () -> Unit
@@ -178,12 +225,53 @@ fun HeadApplicationsScreen(
             CyberTopBar(
                 title = "Head Applications",
                 subtitle = "${applications.count { it.status == "PENDING" }} pending",
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") } }
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") } },
+                actions = {
+                    IconButton(onClick = onRefresh) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Refresh", tint = TextPrimary)
+                    }
+                }
             )
             HorizontalDivider(color = BlueBorder)
 
+            if (errorMessage != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = DangerRed.copy(alpha = 0.1f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, DangerRed)
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Error, contentDescription = null, tint = DangerRed)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Application Error", style = MaterialTheme.typography.titleSmall, color = DangerRed)
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(errorMessage, style = MaterialTheme.typography.bodySmall, color = TextPrimary)
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedButton(onClick = onRefresh) {
+                            Text("Retry Query")
+                        }
+                    }
+                }
+            }
+
+            if (actionMessage != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = SuccessGreen.copy(alpha = 0.15f)),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, SuccessGreen)
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = SuccessGreen)
+                        Spacer(Modifier.width(8.dp))
+                        Text(actionMessage, style = MaterialTheme.typography.bodyMedium, color = SuccessGreen)
+                    }
+                }
+            }
+
             if (isLoading) { LoadingState(modifier = Modifier.fillMaxSize()); return@Column }
-            if (applications.isEmpty()) {
+            if (applications.isEmpty() && errorMessage == null) {
                 EmptyState(icon = Icons.Filled.List, title = "No applications", message = "No head applications to review.", modifier = Modifier.fillMaxSize())
                 return@Column
             }
@@ -349,7 +437,7 @@ fun AuditLogsScreen(
                             }
                             Text("Actor: @${log.actorUsername ?: log.actorUserId}", style = MaterialTheme.typography.bodyMedium)
                             if (log.target != null) Text("Target: ${log.target}", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
-                            if (log.metadata != null) Text(log.metadata, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                            if (log.metadata != null) Text(log.metadata.toString(), style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                         }
                     }
                 }

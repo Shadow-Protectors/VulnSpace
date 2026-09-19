@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -17,8 +19,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.vulnspace.app.domain.model.*
+import com.vulnspace.app.presentation.viewmodel.AdminViewModel
+import com.vulnspace.app.presentation.viewmodel.CommunitySetupViewModel
 import com.vulnspace.app.presentation.viewmodel.HeadConsoleViewModel
 import com.vulnspace.app.presentation.viewmodel.*
+import com.vulnspace.app.data.supabase.SupabaseApi
+import io.github.jan.supabase.gotrue.auth
 import com.vulnspace.app.ui.components.BottomNavigationBar
 import com.vulnspace.app.ui.screens.*
 import com.vulnspace.app.ui.theme.PrimaryBlue
@@ -40,6 +46,35 @@ fun VulnSpaceNavGraph(
         is SessionState.Unauthenticated,
         is SessionState.AnonymousMemberWithoutCommunity -> {
             AuthNavGraph(onSessionResolved = { sessionViewModel.resolveSession() })
+        }
+
+        is SessionState.HeadApplicationPending,
+        is SessionState.PendingHeadApplication -> {
+            AuthNavGraph(
+                onSessionResolved = { sessionViewModel.resolveSession() },
+                startDestination = Destinations.HEAD_APPLICATION_PENDING
+            )
+        }
+
+        is SessionState.HeadApplicationRejected -> {
+            AuthNavGraph(
+                onSessionResolved = { sessionViewModel.resolveSession() },
+                startDestination = Destinations.HEAD_APPLICATION_REJECTED
+            )
+        }
+
+        is SessionState.HeadApprovedSetupRequired -> {
+            AuthNavGraph(
+                onSessionResolved = { sessionViewModel.resolveSession() },
+                startDestination = Destinations.COMMUNITY_SETUP
+            )
+        }
+
+        is SessionState.MustChangePassword -> {
+            AuthNavGraph(
+                onSessionResolved = { sessionViewModel.resolveSession() },
+                startDestination = Destinations.CREATE_NEW_PASSWORD
+            )
         }
 
         is SessionState.Member -> {
@@ -69,16 +104,6 @@ fun VulnSpaceNavGraph(
             )
         }
 
-        is SessionState.PendingHeadApplication -> {
-            MemberNavGraph(
-                userId = state.userId,
-                communityId = "",
-                username = "",
-                role = "PENDING_HEAD",
-                onSignOut = { sessionViewModel.signOut() }
-            )
-        }
-
         is SessionState.SuspendedUser -> {
             SuspendedUserScreen(
                 reason = state.reason,
@@ -93,14 +118,31 @@ fun VulnSpaceNavGraph(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun AuthNavGraph(onSessionResolved: () -> Unit) {
+private fun AuthNavGraph(
+    onSessionResolved: () -> Unit,
+    startDestination: String = Destinations.WELCOME
+) {
     val navController = rememberNavController()
-    NavHost(navController = navController, startDestination = Destinations.WELCOME) {
+    NavHost(navController = navController, startDestination = startDestination) {
         composable(Destinations.WELCOME) {
             WelcomeScreen(
                 onJoinCommunity = { navController.navigate(Destinations.JOIN_COMMUNITY) },
                 onApplyAsHead = { navController.navigate(Destinations.HEAD_APPLICATION_FORM) },
-                onSignIn = { navController.navigate(Destinations.SIGN_IN) }
+                onHeadLogin = { navController.navigate(Destinations.COMMUNITY_HEAD_LOGIN) },
+                onAdminLogin = { navController.navigate(Destinations.PLATFORM_ADMIN_LOGIN) }
+            )
+        }
+        composable(Destinations.PLATFORM_ADMIN_LOGIN) {
+            val adminLoginVm: PlatformAdminLoginViewModel = viewModel()
+            val adminLoginState by adminLoginVm.uiState.collectAsStateWithLifecycle()
+            PlatformAdminLoginScreen(
+                state = adminLoginState,
+                onEmailChange = adminLoginVm::onEmailChange,
+                onPasswordChange = adminLoginVm::onPasswordChange,
+                onSubmit = {
+                    adminLoginVm.signInAsAdmin(onSuccess = onSessionResolved)
+                },
+                onBack = { navController.popBackStack() }
             )
         }
         composable(Destinations.SIGN_IN) {
@@ -156,6 +198,49 @@ private fun AuthNavGraph(onSessionResolved: () -> Unit) {
                     appVm.submitApplication(onSuccess = onSessionResolved) 
                 },
                 onBack = { navController.popBackStack() }
+            )
+        }
+        composable(Destinations.HEAD_APPLICATION_PENDING) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Your head application is pending review.", style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+        composable(Destinations.HEAD_APPLICATION_REJECTED) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Your head application was rejected.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
+            }
+        }
+        composable(Destinations.COMMUNITY_SETUP) {
+            val setupVm: CommunitySetupViewModel = viewModel()
+            val isLoading by setupVm.isLoading.collectAsStateWithLifecycle()
+            val error by setupVm.error.collectAsStateWithLifecycle()
+            
+            CommunitySetupScreen(
+                isLoading = isLoading,
+                errorMessage = error,
+                onSubmit = { name, desc ->
+                    setupVm.submitSetup(name, desc, onSuccess = onSessionResolved)
+                }
+            )
+        }
+        composable(Destinations.COMMUNITY_HEAD_LOGIN) {
+            val loginVm: CommunityHeadLoginViewModel = viewModel()
+            CommunityHeadLoginScreen(
+                vm = loginVm,
+                onSuccess = onSessionResolved,
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(Destinations.CREATE_NEW_PASSWORD) {
+            // Note: The userId comes from the session state MustChangePassword
+            // In a real app we could pass it down, but here it's already resolved in the session
+            // For now, let's just pass a dummy or get it from Supabase client directly
+            val userId = SupabaseApi.client.auth.currentUserOrNull()?.id ?: ""
+            val pwdVm: CreateNewPasswordViewModel = viewModel()
+            CreateNewPasswordScreen(
+                userId = userId,
+                vm = pwdVm,
+                onSuccess = onSessionResolved
             )
         }
     }
@@ -336,38 +421,77 @@ private fun MemberNavGraph(
 @Composable
 private fun AdminNavGraph(userId: String, onSignOut: () -> Unit) {
     val navController = rememberNavController()
+    val adminVm: AdminViewModel = viewModel()
+
     NavHost(navController = navController, startDestination = Destinations.ADMIN_DASHBOARD) {
         composable(Destinations.ADMIN_DASHBOARD) {
+            val stats by adminVm.stats.collectAsStateWithLifecycle()
+            val isLoading by adminVm.isStatsLoading.collectAsStateWithLifecycle()
+            val errorMessage by adminVm.errorMessage.collectAsStateWithLifecycle()
+            
+            LaunchedEffect(Unit) {
+                adminVm.loadDashboardStats()
+            }
+
             AdminDashboardScreen(
-                stats = AdminStats(),
-                isLoading = false,
+                stats = stats,
+                isLoading = isLoading,
+                errorMessage = errorMessage,
+                onRefresh = adminVm::loadDashboardStats,
                 onApplicationsClick = { navController.navigate(Destinations.HEAD_APPLICATIONS) },
                 onCommunitiesClick = { navController.navigate(Destinations.COMMUNITIES) },
-                onAuditLogsClick = { navController.navigate(Destinations.AUDIT_LOGS) }
+                onAuditLogsClick = { navController.navigate(Destinations.AUDIT_LOGS) },
+                onSignOut = onSignOut
             )
         }
         composable(Destinations.HEAD_APPLICATIONS) {
+            val apps by adminVm.applications.collectAsStateWithLifecycle()
+            val isLoading by adminVm.isApplicationsLoading.collectAsStateWithLifecycle()
+            val errorMessage by adminVm.errorMessage.collectAsStateWithLifecycle()
+            val actionMessage by adminVm.actionMessage.collectAsStateWithLifecycle()
+            
+            LaunchedEffect(Unit) {
+                adminVm.loadApplications()
+            }
+
             HeadApplicationsScreen(
-                applications = emptyList(),
-                isLoading = false,
-                onApprove = {},
-                onReject = { _, _ -> },
+                applications = apps,
+                isLoading = isLoading,
+                errorMessage = errorMessage,
+                actionMessage = actionMessage,
+                onRefresh = adminVm::loadApplications,
+                onApprove = adminVm::approveApplication,
+                onReject = adminVm::rejectApplication,
                 onBack = { navController.popBackStack() }
             )
         }
         composable(Destinations.COMMUNITIES) {
+            val communities by adminVm.communities.collectAsStateWithLifecycle()
+            val isLoading by adminVm.isCommunitiesLoading.collectAsStateWithLifecycle()
+
+            LaunchedEffect(Unit) {
+                adminVm.loadCommunities()
+            }
+
             CommunitiesScreen(
-                communities = emptyList(),
-                isLoading = false,
-                onSuspend = {},
-                onReactivate = {},
+                communities = communities,
+                isLoading = isLoading,
+                onSuspend = adminVm::suspendCommunity,
+                onReactivate = adminVm::reactivateCommunity,
                 onBack = { navController.popBackStack() }
             )
         }
         composable(Destinations.AUDIT_LOGS) {
+            val logs by adminVm.auditLogs.collectAsStateWithLifecycle()
+            val isLoading by adminVm.isAuditLogsLoading.collectAsStateWithLifecycle()
+
+            LaunchedEffect(Unit) {
+                adminVm.loadAuditLogs()
+            }
+
             AuditLogsScreen(
-                logs = emptyList(),
-                isLoading = false,
+                logs = logs,
+                isLoading = isLoading,
                 onBack = { navController.popBackStack() }
             )
         }

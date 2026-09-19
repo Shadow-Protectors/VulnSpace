@@ -3,6 +3,7 @@ package com.vulnspace.app.presentation.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.vulnspace.app.data.supabase.SupabaseApi
+import com.vulnspace.app.domain.model.HeadApplicationInsert
 import com.vulnspace.app.ui.screens.HeadApplicationFormState
 import io.github.jan.supabase.gotrue.auth
 import io.github.jan.supabase.gotrue.providers.builtin.Email
@@ -22,7 +23,7 @@ class HeadApplicationViewModel : ViewModel() {
 
     fun submitApplication(onSuccess: () -> Unit) {
         val state = _uiState.value
-        if (state.fullName.isBlank() || state.email.isBlank() || state.password.isBlank() || 
+        if (state.fullName.isBlank() || state.email.isBlank() || 
             state.organization.isBlank() || state.communityName.isBlank() || state.reason.isBlank()) {
             _uiState.value = state.copy(errorMessage = "Please fill in all required fields.")
             return
@@ -32,44 +33,52 @@ class HeadApplicationViewModel : ViewModel() {
             _uiState.value = state.copy(isLoading = true, errorMessage = null)
             
             try {
-                // 1. Sign up user
-                val authResult = SupabaseApi.client.auth.signUpWith(Email) {
-                    email = state.email
-                    password = state.password
+                // Attempt anonymous session if not already signed in (doesn't block if disabled)
+                val currentSession = SupabaseApi.client.auth.currentSessionOrNull() ?: run {
+                    try {
+                        SupabaseApi.client.auth.signInAnonymously()
+                        SupabaseApi.client.auth.currentSessionOrNull()
+                    } catch (authEx: Exception) {
+                        authEx.printStackTrace()
+                        null
+                    }
                 }
-                
-                // If sign up is successful, the session is created.
-                val userId = authResult?.id ?: SupabaseApi.client.auth.currentUserOrNull()?.id
-                
-                if (userId == null) {
-                    _uiState.value = state.copy(isLoading = false, errorMessage = "Failed to create account. Please try again.")
-                    return@launch
-                }
+                val userId = currentSession?.user?.id
 
-                // 2. Insert into head_applications
-                val applicationData = mapOf(
-                    "applicant_user_id" to userId,
-                    "full_name" to state.fullName,
-                    "email" to state.email,
-                    "phone" to state.phone.ifBlank { null },
-                    "organization" to state.organization,
-                    "proposed_community_name" to state.communityName,
-                    "proposed_description" to state.communityDescription,
-                    "reason" to state.reason
+                // Insert into head_applications using typed @Serializable model
+                val application = HeadApplicationInsert(
+                    applicant_user_id = userId,
+                    full_name = state.fullName.trim(),
+                    email = state.email.trim(),
+                    phone = state.phone.trim().ifBlank { null },
+                    organization = state.organization.trim(),
+                    proposed_community_name = state.communityName.trim(),
+                    proposed_description = state.communityDescription.trim(),
+                    reason = state.reason.trim(),
+                    status = "PENDING"
                 )
 
                 SupabaseApi.client.postgrest["head_applications"]
-                    .insert(applicationData)
+                    .insert(application)
                 
                 _uiState.value = state.copy(isLoading = false, isSubmitted = true)
                 onSuccess()
                 
             } catch (e: Exception) {
                 e.printStackTrace()
-                // Could be "User already registered" or Postgrest error
+                val rawMsg = e.message.orEmpty()
+                val safeErrorMessage = when {
+                    rawMsg.contains("permission denied", ignoreCase = true) ->
+                        "Database permission denied. Please grant table privileges in Supabase."
+                    rawMsg.contains("anonymous_provider_disabled", ignoreCase = true) || rawMsg.contains("Anonymous sign-ins are disabled", ignoreCase = true) ->
+                        "Anonymous sign-ins are disabled in Supabase. Please enable Anonymous provider in your Supabase dashboard."
+                    rawMsg.contains("network", ignoreCase = true) || rawMsg.contains("connect", ignoreCase = true) ->
+                        "Network error. Please check your internet connection and try again."
+                    else -> rawMsg.ifBlank { "Failed to submit application. Please try again later." }
+                }
                 _uiState.value = state.copy(
                     isLoading = false, 
-                    errorMessage = e.message ?: "An error occurred while submitting."
+                    errorMessage = safeErrorMessage
                 )
             }
         }

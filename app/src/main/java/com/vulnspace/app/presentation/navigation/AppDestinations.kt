@@ -22,6 +22,7 @@ object Destinations {
     const val WELCOME = "welcome"
     const val JOIN_COMMUNITY = "join_community"
     const val SIGN_IN = "sign_in"
+    const val PLATFORM_ADMIN_LOGIN = "platform_admin_login"
     const val USERNAME_SETUP = "username_setup/{inviteCode}"
     fun usernameSetup(inviteCode: String) = "username_setup/$inviteCode"
 
@@ -36,7 +37,13 @@ object Destinations {
 
     // Head Application
     const val HEAD_APPLICATION_FORM = "head_application_form"
-    const val HEAD_APPLICATION_STATUS = "head_application_status"
+    const val HEAD_APPLICATION_PENDING = "head_application_pending"
+    const val HEAD_APPLICATION_REJECTED = "head_application_rejected"
+    const val COMMUNITY_SETUP = "community_setup"
+    
+    // Head Authentication
+    const val COMMUNITY_HEAD_LOGIN = "community_head_login"
+    const val CREATE_NEW_PASSWORD = "create_new_password"
 
     // Community Head Console
     const val HEAD_CONSOLE = "head_console"

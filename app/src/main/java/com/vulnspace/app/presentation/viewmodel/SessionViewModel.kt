@@ -34,13 +34,35 @@ class SessionViewModel : ViewModel() {
                     _sessionState.value = SessionState.Unauthenticated
                     return@launch
                 }
+                
+                val email = session.user?.email ?: ""
+
+                // 0. Check if user must change password (for Community Heads on first login)
+                try {
+                    val profileResult = SupabaseApi.client.postgrest["profiles"]
+                        .select { filter { eq("id", userId) } }
+                        .decodeList<JsonObject>()
+                        
+                    if (profileResult.isNotEmpty()) {
+                        val profile = profileResult.first()
+                        val mustChange = profile["must_change_password"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+                        if (mustChange) {
+                            _sessionState.value = SessionState.MustChangePassword(userId = userId, email = email)
+                            return@launch
+                        }
+                    }
+                } catch (_: Exception) {
+                    // Ignore profile read errors for admin accounts that may not have a profile row
+                }
 
                 // 1. Check if platform admin (most privileged — checked first)
-                val adminResult = SupabaseApi.client.postgrest["platform_admins"]
-                    .select { filter { eq("user_id", userId) } }
-                    .decodeList<JsonObject>()
+                val isPlatformAdmin = try {
+                    com.vulnspace.app.data.repository.AdminAuthorizationRepository().isPlatformAdmin()
+                } catch (e: Exception) {
+                    false
+                }
 
-                if (adminResult.isNotEmpty()) {
+                if (isPlatformAdmin) {
                     _sessionState.value = SessionState.PlatformAdmin(userId = userId)
                     return@launch
                 }
@@ -51,7 +73,28 @@ class SessionViewModel : ViewModel() {
                     .decodeList<JsonObject>()
 
                 if (memberResult.isEmpty()) {
-                    // Authenticated but not in any community
+                    // 3. Authenticated but not in a community. Check if they have a Head Application.
+                    val appResult = SupabaseApi.client.postgrest["head_applications"]
+                        .select { filter { eq("applicant_user_id", userId) } }
+                        .decodeList<JsonObject>()
+                        
+                    if (appResult.isNotEmpty()) {
+                        val appRow = appResult.first()
+                        val status = appRow["status"]?.jsonPrimitive?.content ?: "PENDING"
+                        
+                        when (status) {
+                            "PENDING" -> _sessionState.value = SessionState.HeadApplicationPending
+                            "REJECTED" -> _sessionState.value = SessionState.HeadApplicationRejected
+                            // Note: APPROVED without membership is a transient state before community is fully set up,
+                            // or they haven't logged in with the temp credential yet.
+                            // If they are logged in and must change password, we already caught it in step 0.
+                            // If they are somehow here, they have no membership.
+                            else -> _sessionState.value = SessionState.AnonymousMemberWithoutCommunity
+                        }
+                        return@launch
+                    }
+                    
+                    // Otherwise, just a regular authenticated user without a community
                     _sessionState.value = SessionState.AnonymousMemberWithoutCommunity
                     return@launch
                 }
@@ -67,8 +110,8 @@ class SessionViewModel : ViewModel() {
                     return@launch
                 }
 
-                // 3. Check if community head
-                if (role == "COMMUNITY_HEAD") {
+                // 4. Check if community head (supports both HEAD and COMMUNITY_HEAD)
+                if (role == "COMMUNITY_HEAD" || role == "HEAD") {
                     _sessionState.value = SessionState.CommunityHead(
                         userId = userId,
                         communityId = communityId,
@@ -77,7 +120,7 @@ class SessionViewModel : ViewModel() {
                     return@launch
                 }
 
-                // 4. Regular member
+                // 5. Regular member
                 _sessionState.value = SessionState.Member(
                     userId = userId,
                     communityId = communityId,

@@ -17,7 +17,6 @@ import com.vulnspace.app.ui.theme.*
 data class HeadApplicationFormState(
     val fullName: String = "",
     val email: String = "",
-    val password: String = "",
     val phone: String = "",
     val organization: String = "",
     val communityName: String = "",
@@ -73,7 +72,6 @@ fun HeadApplicationFormScreen(
                         Text("Personal Information", style = MaterialTheme.typography.titleMedium)
                         OutlinedCyberTextField(value = state.fullName, onValueChange = { onFieldChange(state.copy(fullName = it)) }, label = "Full Name *", leadingIcon = Icons.Filled.Person)
                         OutlinedCyberTextField(value = state.email, onValueChange = { onFieldChange(state.copy(email = it)) }, label = "Email *", leadingIcon = Icons.Filled.Email, keyboardType = KeyboardType.Email)
-                        OutlinedCyberTextField(value = state.password, onValueChange = { onFieldChange(state.copy(password = it)) }, label = "Password *", leadingIcon = Icons.Filled.Lock, keyboardType = KeyboardType.Password, isPassword = true)
                         OutlinedCyberTextField(value = state.phone, onValueChange = { onFieldChange(state.copy(phone = it)) }, label = "Phone (optional)", leadingIcon = Icons.Filled.Phone, keyboardType = KeyboardType.Phone)
                         OutlinedCyberTextField(value = state.organization, onValueChange = { onFieldChange(state.copy(organization = it)) }, label = "College / Organization *", leadingIcon = Icons.Filled.School)
                     }
@@ -92,7 +90,7 @@ fun HeadApplicationFormScreen(
                     ErrorState(state.errorMessage)
                 }
 
-                val isValid = state.fullName.isNotBlank() && state.email.isNotBlank() && state.password.isNotBlank() &&
+                val isValid = state.fullName.isNotBlank() && state.email.isNotBlank() &&
                     state.organization.isNotBlank() && state.communityName.isNotBlank() &&
                     state.communityDescription.isNotBlank() && state.reason.isNotBlank()
 

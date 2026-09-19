@@ -2,9 +2,16 @@ package com.vulnspace.app.presentation.navigation
 
 // Sealed class representing all possible app states based on resolved session + role
 sealed class SessionState {
-    object LoadingSession : SessionState()
-    object Unauthenticated : SessionState()
-    object AnonymousMemberWithoutCommunity : SessionState()
+    data object LoadingSession : SessionState()
+    data object Unauthenticated : SessionState()
+    data object AnonymousMemberWithoutCommunity : SessionState()
+    
+    // Head Application Flow
+    data object HeadApplicationPending : SessionState()
+    data object HeadApplicationRejected : SessionState()
+    data object HeadApprovedSetupRequired : SessionState()
+
+    data class MustChangePassword(val userId: String, val email: String) : SessionState()
     data class Member(val userId: String, val communityId: String, val username: String) : SessionState()
     data class CommunityHead(val userId: String, val communityId: String, val username: String) : SessionState()
     data class PlatformAdmin(val userId: String) : SessionState()
