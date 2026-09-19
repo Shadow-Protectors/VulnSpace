@@ -75,21 +75,29 @@ class AdminViewModel : ViewModel() {
 
     /**
      * Sanitizes errors to strictly prevent exposing URLs, Bearer tokens,
-     * JWT access tokens, or internal database exception details in UI or logs.
+     * JWT access tokens, or internal database secrets, while preserving
+     * meaningful server error messages (e.g. from Edge Functions or PostgREST).
      */
     private fun sanitizeErrorMessage(e: Throwable, defaultMessage: String): String {
         val raw = e.message.orEmpty()
-        val lower = raw.lowercase()
+
+        // Extract clean error message from JSON response payload {"error":"..."} or {"message":"..."}
+        val serverError = Regex("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"")
+            .find(raw)?.groupValues?.get(1)
+
+        val target = serverError ?: raw
+        val lower = target.lowercase()
+
         return when {
+            lower.contains("bearer") || lower.contains("authorization") || lower.contains("apikey") ||
+                    lower.contains("jwt") || lower.contains("token") || lower.contains("https://") ->
+                defaultMessage
             lower.contains("permission denied") || lower.contains("42501") ->
                 "Access denied: Missing database permissions. Please verify platform admin status."
             lower.contains("network") || lower.contains("connect") || lower.contains("timeout") ->
                 "Network error: Please check your connection and try again."
-            lower.contains("bearer") || lower.contains("authorization") || lower.contains("apikey") ||
-                    lower.contains("jwt") || lower.contains("token") || lower.contains("https://") ->
-                defaultMessage
-            raw.isNotBlank() && raw.length < 90 && !raw.contains("{") && !raw.contains("http") ->
-                raw
+            target.isNotBlank() && target.length < 120 && !target.contains("{") ->
+                target
             else ->
                 defaultMessage
         }
@@ -242,12 +250,18 @@ class AdminViewModel : ViewModel() {
             _errorMessage.value = null
             try {
                 android.util.Log.d("AdminViewModel", "Invoking manage-head-application for APPROVE: $applicationId")
+                val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
                 val response = SupabaseApi.client.functions.invoke(
-                    "manage-head-application",
-                    buildJsonObject {
+                    function = "manage-head-application",
+                    body = buildJsonObject {
                         put("applicationId", applicationId)
                         put("application_id", applicationId)
                         put("action", "APPROVE")
+                    },
+                    headers = io.ktor.http.Headers.build {
+                        if (!token.isNullOrBlank()) {
+                            append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
+                        }
                     }
                 )
                 android.util.Log.d("AdminViewModel", "Approval function response received")
@@ -271,7 +285,7 @@ class AdminViewModel : ViewModel() {
                 loadAuditLogs()
                 loadCommunities()
             } catch (e: Exception) {
-                android.util.Log.e("AdminViewModel", "Approve failed (sanitized)")
+                android.util.Log.e("AdminViewModel", "Approve failed: ${e.message}", e)
                 _errorMessage.value = sanitizeErrorMessage(e, "Approval failed. Please try again.")
             } finally {
                 _isApplicationsLoading.value = false
@@ -286,14 +300,20 @@ class AdminViewModel : ViewModel() {
             _errorMessage.value = null
             try {
                 android.util.Log.d("AdminViewModel", "Invoking manage-head-application for REJECT: $applicationId")
+                val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
                 SupabaseApi.client.functions.invoke(
-                    "manage-head-application",
-                    buildJsonObject {
+                    function = "manage-head-application",
+                    body = buildJsonObject {
                         put("applicationId", applicationId)
                         put("application_id", applicationId)
                         put("action", "REJECT")
                         put("reason", reason.trim())
                         put("rejection_reason", reason.trim())
+                    },
+                    headers = io.ktor.http.Headers.build {
+                        if (!token.isNullOrBlank()) {
+                            append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
+                        }
                     }
                 )
                 android.util.Log.d("AdminViewModel", "Reject function response received")
@@ -305,7 +325,7 @@ class AdminViewModel : ViewModel() {
                 loadDashboardStats()
                 loadAuditLogs()
             } catch (e: Exception) {
-                android.util.Log.e("AdminViewModel", "Reject failed (sanitized)")
+                android.util.Log.e("AdminViewModel", "Reject failed: ${e.message}", e)
                 _errorMessage.value = sanitizeErrorMessage(e, "Reject failed. Please try again.")
             } finally {
                 _isApplicationsLoading.value = false

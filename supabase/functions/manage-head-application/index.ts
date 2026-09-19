@@ -11,6 +11,7 @@ serve(async (req: Request) => {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
   }
 
   if (req.method === "OPTIONS") {
@@ -22,10 +23,10 @@ serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
 
     if (!supabaseUrl || !supabaseServiceKey) {
-      throw new Error("Missing environment variables for Supabase connection.")
+      throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables.")
     }
 
-    // Initialize the Supabase client with the service role key to bypass RLS for admin actions
+    // Initialize Supabase admin client with service_role key
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
     // Extract auth header to identify the caller
@@ -37,11 +38,11 @@ serve(async (req: Request) => {
       })
     }
 
-    // Get the user from the auth token
+    // Get user from auth token
     const token = authHeader.replace("Bearer ", "").trim()
     const { data: { user }, error: userError } = await supabase.auth.getUser(token)
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
+      return new Response(JSON.stringify({ error: "Invalid or expired token. Please sign in again." }), {
         headers,
         status: 401,
       })
@@ -61,7 +62,7 @@ serve(async (req: Request) => {
       })
     }
 
-    // Parse the request body
+    // Parse request body
     const body = await req.json().catch(() => ({}))
     const applicationId = body.applicationId || body.application_id
     const rawAction = body.action || ""
@@ -75,6 +76,8 @@ serve(async (req: Request) => {
       })
     }
 
+    console.log(`Executing ${action} on head_applications ${applicationId} by admin ${user.id}`)
+
     // Fetch the application
     const { data: application, error: fetchError } = await supabase
       .from("head_applications")
@@ -83,7 +86,7 @@ serve(async (req: Request) => {
       .single()
 
     if (fetchError || !application) {
-      return new Response(JSON.stringify({ error: "Application not found" }), {
+      return new Response(JSON.stringify({ error: `Application not found: ${fetchError?.message || applicationId}` }), {
         headers,
         status: 404,
       })
@@ -117,7 +120,6 @@ serve(async (req: Request) => {
 
       // 1. If applicant has no user account, resolve or create one by email
       if (!applicantUserId) {
-        // Check if an Auth user already exists with this email
         const { data: userList } = await supabase.auth.admin.listUsers()
         const existingUser = userList?.users?.find(
           (u: any) => u.email?.toLowerCase() === application.email?.toLowerCase()
@@ -126,7 +128,6 @@ serve(async (req: Request) => {
         if (existingUser) {
           applicantUserId = existingUser.id
         } else {
-          // Generate a secure temporary password for the approved head
           const tempPassword = `VulnHead!${Math.random().toString(36).slice(-8)}#`
 
           const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
@@ -143,12 +144,22 @@ serve(async (req: Request) => {
         }
       }
 
-      // 2. Ensure profiles record exists and mark must_change_password
-      await supabase.from("profiles").upsert({
-        id: applicantUserId,
-        username: application.full_name,
-        must_change_password: true,
-      }, { onConflict: "id" })
+      console.log(`Resolved Community Head user UUID: ${applicantUserId}`)
+
+      // 2. Ensure profiles record exists (resilient against optional must_change_password column)
+      try {
+        await supabase.from("profiles").upsert({
+          id: applicantUserId,
+          username: application.full_name,
+          must_change_password: true,
+        }, { onConflict: "id" })
+      } catch (_pErr) {
+        // Fallback if must_change_password does not exist
+        await supabase.from("profiles").upsert({
+          id: applicantUserId,
+          username: application.full_name,
+        }, { onConflict: "id" }).catch((e) => console.warn("profiles upsert fallback:", e))
+      }
 
       // 3. Create or activate the community
       let communityId: string | null = null
@@ -162,28 +173,56 @@ serve(async (req: Request) => {
         communityId = existingCommunity.id
         await supabase
           .from("communities")
-          .update({ status: "ACTIVE", created_by: applicantUserId })
+          .update({ 
+            created_by: applicantUserId,
+            status: "ACTIVE" 
+          })
           .eq("id", communityId)
+          .catch(() => {
+            // If status column doesn't exist, update created_by only
+            return supabase.from("communities").update({ created_by: applicantUserId }).eq("id", communityId)
+          })
       } else {
-        const { data: newCommunity, error: communityError } = await supabase
+        // Try inserting with status: ACTIVE, fallback to basic insert if status column absent
+        let newCommunityData: any = null
+        const insertWithStatus = await supabase
           .from("communities")
           .insert({
             name: application.proposed_community_name,
-            description: application.proposed_description,
+            description: application.proposed_description || "Cybersecurity Community",
             created_by: applicantUserId,
             status: "ACTIVE",
           })
-          .select()
+          .select("id")
           .single()
 
-        if (communityError || !newCommunity) {
-          throw new Error(`Failed to create community: ${communityError?.message}`)
+        if (insertWithStatus.error) {
+          const insertBasic = await supabase
+            .from("communities")
+            .insert({
+              name: application.proposed_community_name,
+              description: application.proposed_description || "Cybersecurity Community",
+              created_by: applicantUserId,
+            })
+            .select("id")
+            .single()
+
+          if (insertBasic.error || !insertBasic.data) {
+            throw new Error(`Failed to create community: ${insertBasic.error?.message}`)
+          }
+          newCommunityData = insertBasic.data
+        } else {
+          newCommunityData = insertWithStatus.data
         }
-        communityId = newCommunity.id
+
+        communityId = newCommunityData.id
       }
 
-      // 4. Assign Community Head role
-      await supabase
+      console.log(`Community established with ID: ${communityId}`)
+
+      // 4. Assign Community Head role (resilient against enum vs text for role)
+      let roleAssigned = false
+      const roleTry1 = await supabase
         .from("community_members")
         .upsert({
           community_id: communityId,
@@ -193,8 +232,28 @@ serve(async (req: Request) => {
           status: "ACTIVE",
         }, { onConflict: "community_id, user_id" })
 
-      // 5. Update application record
-      await supabase
+      if (!roleTry1.error) {
+        roleAssigned = true
+      } else {
+        console.warn("COMMUNITY_HEAD role upsert failed, retrying with legacy HEAD:", roleTry1.error)
+        const roleTry2 = await supabase
+          .from("community_members")
+          .upsert({
+            community_id: communityId,
+            user_id: applicantUserId,
+            username: application.full_name,
+            role: "HEAD",
+            status: "ACTIVE",
+          }, { onConflict: "community_id, user_id" })
+
+        if (roleTry2.error) {
+          throw new Error(`Failed to assign community head role: ${roleTry2.error.message}`)
+        }
+        roleAssigned = true
+      }
+
+      // 5. Update application record to APPROVED
+      const updateResult = await supabase
         .from("head_applications")
         .update({
           status: "APPROVED",
@@ -205,7 +264,15 @@ serve(async (req: Request) => {
         })
         .eq("id", applicationId)
 
-      // 6. Insert Audit Log
+      if (updateResult.error) {
+        // Fallback update with minimal columns if approved_by/at don't exist
+        await supabase
+          .from("head_applications")
+          .update({ status: "APPROVED" })
+          .eq("id", applicationId)
+      }
+
+      // 6. Insert Audit Log (non-blocking)
       await supabase.from("audit_logs").insert({
         actor_id: user.id,
         action: "COMMUNITY_HEAD_APPLICATION_APPROVED",
@@ -217,9 +284,9 @@ serve(async (req: Request) => {
           applicant_user_id: applicantUserId,
           community_name: application.proposed_community_name,
         },
-      })
+      }).catch((e: any) => console.warn("Audit log insert non-fatal warning:", e))
 
-      // 7. Insert In-app Notification for the applicant
+      // 7. Insert In-app Notification for applicant (non-blocking)
       await supabase.from("notifications").insert({
         recipient_user_id: applicantUserId,
         application_id: applicationId,
@@ -227,7 +294,7 @@ serve(async (req: Request) => {
         title: "Community application approved",
         body: "Your application was approved. Check your email for login instructions.",
         type: "HEAD_APPLICATION_APPROVED",
-      })
+      }).catch((e: any) => console.warn("Notification insert non-fatal warning:", e))
 
       // 8. Handle Email notification (provider failure does NOT rollback approval)
       const resendApiKey = Deno.env.get("RESEND_API_KEY")
@@ -264,7 +331,7 @@ serve(async (req: Request) => {
         }
       }
 
-      // Record email delivery audit
+      // Record email delivery audit (non-blocking)
       await supabase.from("email_deliveries").insert({
         recipient_email: application.email,
         recipient_user_id: applicantUserId,
@@ -274,7 +341,9 @@ serve(async (req: Request) => {
         provider_message_id: providerMessageId,
         error_message: errorMessage,
         sent_at: emailStatus === "SENT" ? new Date().toISOString() : null,
-      }).catch((e: any) => console.error("Failed to record email delivery:", e))
+      }).catch((e: any) => console.warn("email_deliveries insert non-fatal warning:", e))
+
+      console.log(`Approval completed successfully for application ${applicationId}`)
 
       return new Response(JSON.stringify({
         message: emailStatus === "FAILED" 
@@ -288,7 +357,7 @@ serve(async (req: Request) => {
 
     } else {
       // REJECT ACTION
-      await supabase
+      const rejectUpdate = await supabase
         .from("head_applications")
         .update({
           status: "REJECTED",
@@ -299,7 +368,14 @@ serve(async (req: Request) => {
         })
         .eq("id", applicationId)
 
-      // Insert Audit Log
+      if (rejectUpdate.error) {
+        await supabase
+          .from("head_applications")
+          .update({ status: "REJECTED" })
+          .eq("id", applicationId)
+      }
+
+      // Insert Audit Log (non-blocking)
       await supabase.from("audit_logs").insert({
         actor_id: user.id,
         action: "COMMUNITY_HEAD_APPLICATION_REJECTED",
@@ -309,17 +385,19 @@ serve(async (req: Request) => {
           applicant_email: application.email,
           reason: rejectionReason,
         },
-      })
+      }).catch((e: any) => console.warn("Reject audit log warning:", e))
 
-      // In-app notification if user has an account
+      // In-app notification if applicant has user account (non-blocking)
       if (application.applicant_user_id) {
         await supabase.from("notifications").insert({
           recipient_user_id: application.applicant_user_id,
           application_id: applicationId,
           title: "Community Application Update",
           body: `Your community application was not approved: ${rejectionReason}`,
-        })
+        }).catch((e: any) => console.warn("Reject notification warning:", e))
       }
+
+      console.log(`Rejection completed successfully for application ${applicationId}`)
 
       return new Response(JSON.stringify({
         message: "Application rejected successfully",
@@ -329,6 +407,7 @@ serve(async (req: Request) => {
     }
 
   } catch (error) {
+    console.error("manage-head-application caught error:", error)
     return new Response(JSON.stringify({ error: (error as Error).message }), {
       headers,
       status: 400,
