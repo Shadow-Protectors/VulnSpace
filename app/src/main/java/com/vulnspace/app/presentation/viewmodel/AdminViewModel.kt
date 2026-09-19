@@ -7,6 +7,7 @@ import com.vulnspace.app.domain.model.AuditLog
 import com.vulnspace.app.domain.model.Community
 import com.vulnspace.app.domain.model.HeadApplication
 import com.vulnspace.app.ui.screens.AdminStats
+import com.vulnspace.app.ui.screens.ApprovalResult
 import com.vulnspace.app.ui.screens.DashboardState
 import io.github.jan.supabase.functions.functions
 import io.github.jan.supabase.gotrue.auth
@@ -58,6 +59,9 @@ class AdminViewModel : ViewModel() {
     private val _actionMessage = MutableStateFlow<String?>(null)
     val actionMessage: StateFlow<String?> = _actionMessage.asStateFlow()
 
+    private val _approvalResult = MutableStateFlow<ApprovalResult?>(null)
+    val approvalResult: StateFlow<ApprovalResult?> = _approvalResult.asStateFlow()
+
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
@@ -104,6 +108,16 @@ class AdminViewModel : ViewModel() {
             else ->
                 defaultMessage
         }
+    }
+
+    private fun responseString(body: String, key: String): String? =
+        Regex("\\\"${Regex.escape(key)}\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"")
+            .find(body)
+            ?.groupValues
+            ?.getOrNull(1)
+
+    fun dismissApprovalResult() {
+        _approvalResult.value = null
     }
 
     fun loadDashboardStats() {
@@ -250,7 +264,11 @@ class AdminViewModel : ViewModel() {
         viewModelScope.launch {
             _isApplicationsLoading.value = true
             _actionMessage.value = null
+            _approvalResult.value = null
             _errorMessage.value = null
+            // Keep these details before the pending item is removed, so the
+            // completion panel can explain exactly what the admin should do next.
+            val approvedApplication = _applications.value.firstOrNull { it.id == applicationId }
             try {
                 android.util.Log.d("AdminViewModel", "Invoking manage-head-application for APPROVE: $applicationId")
                 val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
@@ -281,22 +299,24 @@ class AdminViewModel : ViewModel() {
                 // Eagerly remove the item from pending list
                 _applications.value = _applications.value.filter { it.id != applicationId }
 
-                // If the email provider is not configured/failed, the function returns the
-                // applicant's one-time password to the admin for manual handover.
-                val manualOtp = Regex("\"one_time_password\"\\s*:\\s*\"([^\"]+)\"")
-                    .find(responseText)?.groupValues?.get(1)
-
-                _actionMessage.value = when {
-                    manualOtp != null ->
-                        "Approved. Email was NOT delivered — share this one-time password with the applicant: $manualOtp"
-                    responseText.contains("\"email_status\":\"FAILED\"", ignoreCase = true) ||
-                        responseText.contains("email delivery failed", ignoreCase = true) ->
-                        "Application approved, but email delivery failed."
-                    else ->
-                        "Application approved. Sign-in instructions emailed to the applicant."
-                }
+                // The Edge Function only reports success after the community, head membership,
+                // and approval record are complete. Its response also tells us whether the
+                // durable in-app approval alert was created and whether email was delivered.
+                val manualOtp = responseString(responseText, "one_time_password")
+                val emailStatus = responseString(responseText, "email_status") ?: "NOT_SENT"
+                val notificationStatus = responseString(responseText, "notification_status") ?: "IN_APP_PENDING"
+                _approvalResult.value = ApprovalResult(
+                    communityName = responseString(responseText, "community_name")
+                        ?: approvedApplication?.proposed_community_name
+                        ?: "Approved community",
+                    applicantName = approvedApplication?.full_name ?: "The applicant",
+                    emailStatus = emailStatus,
+                    notificationStatus = notificationStatus,
+                    oneTimePassword = manualOtp
+                )
 
                 // Refresh all related records fresh from database
+
                 loadApplications()
                 loadDashboardStats()
                 loadAuditLogs()

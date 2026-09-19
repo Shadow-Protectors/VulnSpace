@@ -472,6 +472,7 @@ private fun AdminNavGraph(userId: String, onSignOut: () -> Unit) {
             val isLoading by adminVm.isApplicationsLoading.collectAsStateWithLifecycle()
             val errorMessage by adminVm.errorMessage.collectAsStateWithLifecycle()
             val actionMessage by adminVm.actionMessage.collectAsStateWithLifecycle()
+            val approvalResult by adminVm.approvalResult.collectAsStateWithLifecycle()
             
             LaunchedEffect(Unit) {
                 adminVm.loadApplications()
@@ -482,9 +483,15 @@ private fun AdminNavGraph(userId: String, onSignOut: () -> Unit) {
                 isLoading = isLoading,
                 errorMessage = errorMessage,
                 actionMessage = actionMessage,
+                approvalResult = approvalResult,
                 onRefresh = adminVm::loadApplications,
                 onApprove = adminVm::approveApplication,
                 onReject = adminVm::rejectApplication,
+                onViewApprovedCommunity = {
+                    adminVm.dismissApprovalResult()
+                    navController.navigate(Destinations.COMMUNITIES)
+                },
+                onDismissApprovalResult = adminVm::dismissApprovalResult,
                 onBack = { navController.popBackStack() }
             )
         }

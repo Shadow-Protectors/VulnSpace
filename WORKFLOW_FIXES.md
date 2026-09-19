@@ -137,3 +137,25 @@ Everything below was placeholder/simulation before; it is now wired end-to-end:
 - Invite codes are stored in plaintext in `token_hash` (needed for the console's share-after-creation UX); hashing them is a future hardening step that requires showing the code only at creation time.
 - The safety check in `submit-content-url` is heuristic (scheme + a tiny blocklist), not a real threat feed — flagged as future work; NEEDS_REVIEW items are published but visibly badged.
 - Head content moderation actions (archive/remove from the console) still land on the shared feed view — the RLS policies (`head_manage_content`, `head_remove_content`) already permit them when a dedicated screen is built.
+
+## 8. Part 3 — Reliable approval completion and Community Head notification
+
+An approval now has an explicit completion path instead of silently removing the request from the pending list:
+
+- The admin confirms **Approve & Notify** before the action runs.
+- The server creates the community, assigns the Community Head membership, records the created `community_id` on the application, and marks the approval complete.
+- Migration `202609192300_reliable_head_approval_notifications.sql` adds a database trigger. Whenever an application transitions to `APPROVED`, it creates exactly one durable **Community approved** alert for the applicant. This is independent of email delivery, so a temporary email-provider failure cannot make the approval disappear.
+- The admin sees a completion card with the community name, in-app alert status, email status, one-time password when required, and a **View Community** next step.
+- Retrying an already-completed approval returns the same completed result rather than reporting a confusing failure.
+
+**Deploy this part:**
+
+```bash
+# 1. Run this migration in the Supabase SQL Editor
+#    supabase/migrations/202609192300_reliable_head_approval_notifications.sql
+
+# 2. Deploy the updated approval function
+supabase functions deploy manage-head-application
+```
+
+**Verify:** submit a head application, sign in as a platform admin, open **Head Applications**, approve it, and confirm the completion card appears. Sign in as the approved Community Head; after changing the one-time password if prompted, open **Alerts** to see **Community approved**. If `RESEND_API_KEY` is configured, the same sign-in instructions are emailed; otherwise the admin safely receives the one-time password for manual delivery.
