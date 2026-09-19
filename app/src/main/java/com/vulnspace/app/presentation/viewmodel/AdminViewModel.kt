@@ -89,14 +89,17 @@ class AdminViewModel : ViewModel() {
         val lower = target.lowercase()
 
         return when {
-            lower.contains("bearer") || lower.contains("authorization") || lower.contains("apikey") ||
-                    lower.contains("jwt") || lower.contains("token") || lower.contains("https://") ->
+            // Hide actual secrets/URLs — not harmless words like "token".
+            // Edge Function {"error": ...} payloads are operator-curated and safe.
+            lower.contains("bearer ") || lower.contains("apikey") ||
+                    lower.contains("eyj") || lower.contains("http") ->
                 defaultMessage
             lower.contains("permission denied") || lower.contains("42501") ->
-                "Access denied: Missing database permissions. Please verify platform admin status."
-            lower.contains("network") || lower.contains("connect") || lower.contains("timeout") ->
+                "Access denied: Missing database permissions. Run the latest SQL migration and verify your admin status."
+            lower.contains("failed to fetch") || lower.contains("network") ||
+                    lower.contains("connect") || lower.contains("timeout") ->
                 "Network error: Please check your connection and try again."
-            target.isNotBlank() && target.length < 120 && !target.contains("{") ->
+            target.isNotBlank() && target.length < 160 && !target.contains("{") ->
                 target
             else ->
                 defaultMessage
@@ -266,17 +269,31 @@ class AdminViewModel : ViewModel() {
                 )
                 android.util.Log.d("AdminViewModel", "Approval function response received")
 
+                val responseText = try { response.bodyAsText() } catch (_: Exception) { "" }
+
+                // Non-2xx from the function -> surface the server's real message
+                if (response.status.value !in 200..299) {
+                    val serverMsg = Regex("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"")
+                        .find(responseText)?.groupValues?.get(1)
+                    throw Exception(serverMsg ?: "Server returned HTTP ${response.status.value}")
+                }
+
                 // Eagerly remove the item from pending list
                 _applications.value = _applications.value.filter { it.id != applicationId }
 
-                // Check for email delivery warning in payload if returned
-                val responseText = try { response.bodyAsText() } catch (_: Exception) { "" }
-                if (responseText.contains("email delivery failed", ignoreCase = true) ||
-                    responseText.contains("\"email_status\":\"FAILED\"", ignoreCase = true)
-                ) {
-                    _actionMessage.value = "Application approved, but email delivery failed."
-                } else {
-                    _actionMessage.value = "Application approved successfully"
+                // If the email provider is not configured/failed, the function returns the
+                // applicant's one-time password to the admin for manual handover.
+                val manualOtp = Regex("\"one_time_password\"\\s*:\\s*\"([^\"]+)\"")
+                    .find(responseText)?.groupValues?.get(1)
+
+                _actionMessage.value = when {
+                    manualOtp != null ->
+                        "Approved. Email was NOT delivered — share this one-time password with the applicant: $manualOtp"
+                    responseText.contains("\"email_status\":\"FAILED\"", ignoreCase = true) ||
+                        responseText.contains("email delivery failed", ignoreCase = true) ->
+                        "Application approved, but email delivery failed."
+                    else ->
+                        "Application approved. Sign-in instructions emailed to the applicant."
                 }
 
                 // Refresh all related records fresh from database
@@ -301,7 +318,7 @@ class AdminViewModel : ViewModel() {
             try {
                 android.util.Log.d("AdminViewModel", "Invoking manage-head-application for REJECT: $applicationId")
                 val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
-                SupabaseApi.client.functions.invoke(
+                val response = SupabaseApi.client.functions.invoke(
                     function = "manage-head-application",
                     body = buildJsonObject {
                         put("applicationId", applicationId)
@@ -317,6 +334,13 @@ class AdminViewModel : ViewModel() {
                     }
                 )
                 android.util.Log.d("AdminViewModel", "Reject function response received")
+
+                if (response.status.value !in 200..299) {
+                    val responseText = try { response.bodyAsText() } catch (_: Exception) { "" }
+                    val serverMsg = Regex("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"")
+                        .find(responseText)?.groupValues?.get(1)
+                    throw Exception(serverMsg ?: "Server returned HTTP ${response.status.value}")
+                }
 
                 _applications.value = _applications.value.filter { it.id != applicationId }
                 _actionMessage.value = "Application rejected"

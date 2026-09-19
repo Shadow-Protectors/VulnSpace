@@ -30,12 +30,16 @@ data class InviteLink(
     val id: String,
     @SerialName("community_id") val communityId: String,
     @SerialName("token_hash") val tokenHash: String,
-    val status: String = "ACTIVE", // ACTIVE, REVOKED, EXPIRED
     @SerialName("max_uses") val maxUses: Int? = null,
-    @SerialName("used_count") val usedCount: Int = 0,
+    @SerialName("uses") val usedCount: Int = 0,
     @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("revoked_at") val revokedAt: String? = null,
     @SerialName("created_at") val createdAt: String = ""
-)
+) {
+    // invite_links has no `status` column — derive from revocation/expiry/uses
+    val isActive: Boolean
+        get() = revokedAt == null && (maxUses == null || usedCount < maxUses)
+}
 
 @Serializable
 data class AppNotification(

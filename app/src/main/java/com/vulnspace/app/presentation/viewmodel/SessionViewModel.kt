@@ -67,9 +67,9 @@ class SessionViewModel : ViewModel() {
                     return@launch
                 }
 
-                // 2. Check community membership
+                // 2. Check community membership (active only — REMOVED members lose access)
                 val memberResult = SupabaseApi.client.postgrest["community_members"]
-                    .select { filter { eq("user_id", userId) } }
+                    .select { filter { eq("user_id", userId); eq("status", "ACTIVE") } }
                     .decodeList<JsonObject>()
 
                 if (memberResult.isEmpty()) {

@@ -2,9 +2,19 @@ package com.vulnspace.app.presentation.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.vulnspace.app.data.supabase.SupabaseApi
+import io.github.jan.supabase.functions.functions
+import io.github.jan.supabase.gotrue.auth
+import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 
 enum class SubmitStep {
     IDLE, URL_RECEIVED, CHECKING_FORMAT, ANALYZING_PAGE,
@@ -49,40 +59,101 @@ class SubmitUrlViewModel : ViewModel() {
     fun onMetadataChange(metadata: ExtractedMetadata) = _uiState.update { it.copy(metadata = metadata) }
 
     fun submit(communityId: String) {
-        val url = _uiState.value.url
+        val url = _uiState.value.url.trim()
         if (!_uiState.value.isUrlValid) {
             _uiState.update { it.copy(errorMessage = "Please enter a valid URL starting with https://") }
             return
         }
+        if (communityId.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Community is still loading — try again in a moment.") }
+            return
+        }
+
         viewModelScope.launch {
             try {
-                // Progress simulation — replace with real Edge Function call
-                val steps = listOf(
-                    SubmitStep.URL_RECEIVED,
-                    SubmitStep.CHECKING_FORMAT,
-                    SubmitStep.ANALYZING_PAGE,
-                    SubmitStep.EXTRACTING_DETAILS,
-                    SubmitStep.CHECKING_SAFETY,
-                    SubmitStep.PREPARING_CARD
+                _uiState.update { it.copy(step = SubmitStep.URL_RECEIVED, errorMessage = null) }
+                delay(300)
+                _uiState.update { it.copy(step = SubmitStep.CHECKING_FORMAT) }
+                delay(300)
+                _uiState.update { it.copy(step = SubmitStep.ANALYZING_PAGE) }
+
+                val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
+                val response = SupabaseApi.client.functions.invoke(
+                    function = "submit-content-url",
+                    body = buildJsonObject {
+                        put("community_id", communityId)
+                        put("url", url)
+                        if (_uiState.value.selectedCategory.isNotBlank()) {
+                            put("category", _uiState.value.selectedCategory)
+                        }
+                    },
+                    headers = io.ktor.http.Headers.build {
+                        if (!token.isNullOrBlank()) {
+                            append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
+                        }
+                    }
                 )
-                for (step in steps) {
-                    _uiState.update { it.copy(step = step) }
-                    delay(600)
+
+                val responseText = try { response.bodyAsText() } catch (_: Exception) { "" }
+
+                if (response.status.value !in 200..299) {
+                    val serverMsg = Regex("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"")
+                        .find(responseText)?.groupValues?.get(1)
+                    _uiState.update {
+                        it.copy(
+                            step = SubmitStep.FAILED,
+                            errorMessage = serverMsg ?: "Could not process the link (HTTP ${response.status.value})."
+                        )
+                    }
+                    return@launch
                 }
-                // TODO: Call Supabase Edge Function submit-content-url
-                // val response = SupabaseApi.client.functions.invoke("submit-content-url", body = ...)
-                // Parse response and populate metadata
+
+                _uiState.update { it.copy(step = SubmitStep.EXTRACTING_DETAILS) }
+                delay(200)
+                _uiState.update { it.copy(step = SubmitStep.CHECKING_SAFETY) }
+                delay(200)
+
+                val json = try { Json.parseToJsonElement(responseText).jsonObject } catch (_: Exception) { null }
+                val resultStatus = json?.get("status")?.jsonPrimitive?.contentOrNull ?: "PUBLISHED"
+                val meta = json?.get("metadata")
+                val metaObj = try { meta?.jsonObject } catch (_: Exception) { null }
+                fun metaText(key: String) = metaObj?.get(key)?.jsonPrimitive?.contentOrNull ?: ""
+
+                _uiState.update { it.copy(step = SubmitStep.PREPARING_CARD) }
+                delay(200)
+
+                val metadata = ExtractedMetadata(
+                    title = metaText("title"),
+                    description = metaText("description"),
+                    category = metaText("category"),
+                    organizer = metaText("organizer"),
+                    safetyStatus = metaText("safety_status")
+                )
+
+                val finalStep = when {
+                    resultStatus == "BLOCKED" -> SubmitStep.BLOCKED
+                    metaText("safety_status") == "NEEDS_REVIEW" -> SubmitStep.NEEDS_REVIEW
+                    else -> SubmitStep.PUBLISHED
+                }
+
                 _uiState.update {
                     it.copy(
-                        step = SubmitStep.PUBLISHED,
-                        metadata = ExtractedMetadata(
-                            title = "Extracted title will appear here",
-                            safetyStatus = "LOW_RISK"
-                        )
+                        step = finalStep,
+                        metadata = metadata,
+                        errorMessage = if (finalStep == SubmitStep.BLOCKED)
+                            "This link was blocked by the safety check." else null
                     )
                 }
             } catch (e: Exception) {
-                _uiState.update { it.copy(step = SubmitStep.FAILED, errorMessage = "Could not process the link. Please try again.") }
+                val raw = e.message.orEmpty()
+                _uiState.update {
+                    it.copy(
+                        step = SubmitStep.FAILED,
+                        errorMessage = if (raw.contains("network", true) || raw.contains("connect", true))
+                            "Network error. Check your connection and try again."
+                        else "Could not process the link. Please try again."
+                    )
+                }
             }
         }
     }
