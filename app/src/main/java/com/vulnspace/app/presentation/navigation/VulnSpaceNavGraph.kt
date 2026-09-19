@@ -130,26 +130,30 @@ private fun AuthNavGraph(onSessionResolved: () -> Unit) {
         composable(Destinations.USERNAME_SETUP) { backStackEntry ->
             val inviteCode = backStackEntry.arguments?.getString("inviteCode") ?: ""
             var username by remember { mutableStateOf("") }
-            var isLoading by remember { mutableStateOf(false) }
-            var error by remember { mutableStateOf<String?>(null) }
+            val vm: UsernameSetupViewModel = viewModel()
+            val isLoading by vm.isLoading.collectAsStateWithLifecycle()
+            val error by vm.error.collectAsStateWithLifecycle()
+            
             UsernameSetupScreen(
                 inviteCode = inviteCode,
                 username = username,
-                onUsernameChange = { username = it; error = null },
+                onUsernameChange = { username = it },
                 isLoading = isLoading,
                 errorMessage = error,
                 onSubmit = {
-                    // TODO: call join-community Edge Function, then resolveSession
-                    onSessionResolved()
+                    vm.submit(inviteCode, username, onSuccess = onSessionResolved)
                 }
             )
         }
         composable(Destinations.HEAD_APPLICATION_FORM) {
-            var formState by remember { mutableStateOf(HeadApplicationFormState()) }
+            val appVm: HeadApplicationViewModel = viewModel()
+            val formState by appVm.uiState.collectAsStateWithLifecycle()
             HeadApplicationFormScreen(
                 state = formState,
-                onFieldChange = { formState = it },
-                onSubmit = { formState = formState.copy(isSubmitted = true) },
+                onFieldChange = appVm::onFieldChange,
+                onSubmit = { 
+                    appVm.submitApplication(onSuccess = onSessionResolved) 
+                },
                 onBack = { navController.popBackStack() }
             )
         }

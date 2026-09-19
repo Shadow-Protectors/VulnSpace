@@ -1,6 +1,7 @@
 package com.vulnspace.app.domain.model
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.SerialName
 
 @Serializable
 data class Community(
@@ -26,13 +27,13 @@ data class Member(
 @Serializable
 data class InviteLink(
     val id: String,
-    val communityId: String,
-    val code: String,
+    @SerialName("community_id") val communityId: String,
+    @SerialName("token_hash") val tokenHash: String,
     val status: String = "ACTIVE", // ACTIVE, REVOKED, EXPIRED
-    val maxUses: Int? = null,
-    val usedCount: Int = 0,
-    val expiresAt: String? = null,
-    val createdAt: String = ""
+    @SerialName("max_uses") val maxUses: Int? = null,
+    @SerialName("used_count") val usedCount: Int = 0,
+    @SerialName("expires_at") val expiresAt: String? = null,
+    @SerialName("created_at") val createdAt: String = ""
 )
 
 @Serializable

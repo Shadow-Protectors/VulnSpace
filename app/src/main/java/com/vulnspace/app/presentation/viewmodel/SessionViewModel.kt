@@ -9,6 +9,8 @@ import io.github.jan.supabase.postgrest.postgrest
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class SessionViewModel : ViewModel() {
 
@@ -36,7 +38,7 @@ class SessionViewModel : ViewModel() {
                 // 1. Check if platform admin (most privileged — checked first)
                 val adminResult = SupabaseApi.client.postgrest["platform_admins"]
                     .select { filter { eq("user_id", userId) } }
-                    .decodeList<Map<String, String>>()
+                    .decodeList<JsonObject>()
 
                 if (adminResult.isNotEmpty()) {
                     _sessionState.value = SessionState.PlatformAdmin(userId = userId)
@@ -46,7 +48,7 @@ class SessionViewModel : ViewModel() {
                 // 2. Check community membership
                 val memberResult = SupabaseApi.client.postgrest["community_members"]
                     .select { filter { eq("user_id", userId) } }
-                    .decodeList<Map<String, String>>()
+                    .decodeList<JsonObject>()
 
                 if (memberResult.isEmpty()) {
                     // Authenticated but not in any community
@@ -55,10 +57,10 @@ class SessionViewModel : ViewModel() {
                 }
 
                 val memberRow = memberResult.first()
-                val communityId = memberRow["community_id"] ?: ""
-                val username = memberRow["username"] ?: ""
-                val role = memberRow["role"] ?: "MEMBER"
-                val status = memberRow["status"] ?: "ACTIVE"
+                val communityId = memberRow["community_id"]?.jsonPrimitive?.content ?: ""
+                val username = memberRow["username"]?.jsonPrimitive?.content ?: ""
+                val role = memberRow["role"]?.jsonPrimitive?.content ?: "MEMBER"
+                val status = memberRow["status"]?.jsonPrimitive?.content ?: "ACTIVE"
 
                 if (status == "SUSPENDED") {
                     _sessionState.value = SessionState.SuspendedUser(userId = userId)
@@ -83,6 +85,7 @@ class SessionViewModel : ViewModel() {
                 )
 
             } catch (e: Exception) {
+                e.printStackTrace()
                 // Resolve as unauthenticated on error to keep the user in a safe state
                 _sessionState.value = SessionState.Unauthenticated
             }

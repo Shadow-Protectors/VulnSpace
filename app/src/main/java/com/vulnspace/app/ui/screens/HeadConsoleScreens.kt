@@ -138,7 +138,7 @@ fun InviteCodeManagementScreen(
                         onShare = {
                             val shareIntent = Intent().apply {
                                 action = Intent.ACTION_SEND
-                                putExtra(Intent.EXTRA_TEXT, "Join my VulnSpace community with code: ${code.code}")
+                                putExtra(Intent.EXTRA_TEXT, "Join my VulnSpace community with code: ${code.tokenHash}")
                                 type = "text/plain"
                             }
                             context.startActivity(Intent.createChooser(shareIntent, "Share Invite Code"))
@@ -153,7 +153,7 @@ fun InviteCodeManagementScreen(
     codeToRevoke?.let { code ->
         ConfirmationDialog(
             title = "Revoke Code",
-            message = "The code ${code.code} will be deactivated. Members cannot use it to join after revocation.",
+            message = "The code ${code.tokenHash} will be deactivated. Members cannot use it to join after revocation.",
             confirmText = "Revoke",
             isDangerous = true,
             onConfirm = { onRevokeCode(code.id); codeToRevoke = null },
@@ -169,7 +169,7 @@ private fun InviteCodeCard(code: InviteLink, onShare: () -> Unit, onRevoke: () -
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = code.code,
+                    text = code.tokenHash,
                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold),
                     color = if (isActive) PrimaryBlue else TextDisabled
                 )
