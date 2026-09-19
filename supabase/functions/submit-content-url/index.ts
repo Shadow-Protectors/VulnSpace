@@ -1,9 +1,11 @@
+// @ts-nocheck
+// @ts-ignore (Suppresses IDE warning for Deno URL imports)
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { createClient } from "npm:@supabase/supabase-js@2"
 
 console.log("Hello from submit-content-url!")
 
-serve(async (req) => {
+serve(async (req: Request) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -26,7 +28,7 @@ serve(async (req) => {
       { headers: { "Content-Type": "application/json" } },
     )
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: (error as Error).message }), {
       headers: { "Content-Type": "application/json" },
       status: 400,
     })
