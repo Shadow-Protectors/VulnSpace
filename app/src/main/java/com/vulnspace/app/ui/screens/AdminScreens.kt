@@ -31,6 +31,22 @@ data class AdminStats(
     val totalMembers: Int = 0
 )
 
+/**
+ * A durable summary of a successful head-application approval. Keeping this in
+ * UI state means the admin gets a clear next step even after the approved row
+ * disappears from the pending queue.
+ */
+data class ApprovalResult(
+    val communityName: String,
+    val applicantName: String,
+    val emailStatus: String = "NOT_SENT",
+    val notificationStatus: String = "IN_APP_PENDING",
+    val oneTimePassword: String? = null
+) {
+    val emailWasDelivered: Boolean get() = emailStatus == "SENT"
+    val inAppNotificationWasCreated: Boolean get() = notificationStatus == "IN_APP_CREATED"
+}
+
 sealed interface DashboardState {
     data object Loading : DashboardState
     data class Loaded(val stats: AdminStats) : DashboardState
@@ -295,11 +311,15 @@ fun HeadApplicationsScreen(
     isLoading: Boolean,
     errorMessage: String? = null,
     actionMessage: String? = null,
+    approvalResult: ApprovalResult? = null,
     onRefresh: () -> Unit = {},
     onApprove: (String) -> Unit,
     onReject: (String, String) -> Unit,
+    onViewApprovedCommunity: () -> Unit = {},
+    onDismissApprovalResult: () -> Unit = {},
     onBack: () -> Unit
 ) {
+    var approveTarget by remember { mutableStateOf<HeadApplication?>(null) }
     var rejectTarget by remember { mutableStateOf<HeadApplication?>(null) }
     var rejectReason by remember { mutableStateOf("") }
 
@@ -339,6 +359,14 @@ fun HeadApplicationsScreen(
                 }
             }
 
+            approvalResult?.let { result ->
+                ApprovalCompletedCard(
+                    result = result,
+                    onViewCommunity = onViewApprovedCommunity,
+                    onDismiss = onDismissApprovalResult
+                )
+            }
+
             if (actionMessage != null) {
                 val isEmailWarning = actionMessage.contains("email", ignoreCase = true) && actionMessage.contains("failed", ignoreCase = true)
                 Card(
@@ -368,12 +396,25 @@ fun HeadApplicationsScreen(
                 items(applications, key = { it.id }) { app ->
                     ApplicationCard(
                         application = app,
-                        onApprove = { onApprove(app.id) },
+                        onApprove = { approveTarget = app },
                         onReject = { rejectTarget = app }
                     )
                 }
             }
         }
+    }
+
+    approveTarget?.let { app ->
+        ConfirmationDialog(
+            title = "Approve Community Application",
+            message = "Approve ${app.full_name}'s application and create ${app.proposed_community_name}? The Community Head will receive an approval notification and sign-in instructions.",
+            confirmText = "Approve & Notify",
+            onConfirm = {
+                onApprove(app.id)
+                approveTarget = null
+            },
+            onDismiss = { approveTarget = null }
+        )
     }
 
     rejectTarget?.let { app ->
@@ -402,6 +443,81 @@ fun HeadApplicationsScreen(
             dismissButton = { TextButton(onClick = { rejectTarget = null; rejectReason = "" }) { Text("Cancel") } },
             containerColor = WhiteSurface
         )
+    }
+}
+
+@Composable
+private fun ApprovalCompletedCard(
+    result: ApprovalResult,
+    onViewCommunity: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = SuccessGreen.copy(alpha = 0.12f)),
+        border = androidx.compose.foundation.BorderStroke(1.dp, SuccessGreen)
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = SuccessGreen)
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Community approved", style = MaterialTheme.typography.titleSmall, color = SuccessGreen)
+                    Text(result.communityName, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
+                }
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Filled.Close, contentDescription = "Dismiss approval result", tint = TextSecondary)
+                }
+            }
+
+            Text(
+                "${result.applicantName} is now the Community Head. The community is ready to manage.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextPrimary
+            )
+
+            val inAppMessage = if (result.inAppNotificationWasCreated) {
+                "An in-app approval alert was created for the Community Head."
+            } else {
+                "The in-app approval alert is pending. Deploy the latest database migration, then refresh."
+            }
+            Text(inAppMessage, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+
+            if (result.emailWasDelivered) {
+                Text(
+                    "Sign-in instructions were emailed to the Community Head.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+            } else {
+                Text(
+                    if (result.oneTimePassword != null) {
+                        "Email was not delivered. Share the one-time password with the Community Head."
+                    } else {
+                        "Email was not delivered. The Community Head can sign in with their existing password."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WarningAmber
+                )
+            }
+
+            result.oneTimePassword?.let { password ->
+                Text(
+                    "One-time password: $password",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextPrimary
+                )
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onDismiss) { Text("Done") }
+                Button(onClick = onViewCommunity) {
+                    Icon(Icons.Filled.Group, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("View Community")
+                }
+            }
+        }
     }
 }
 

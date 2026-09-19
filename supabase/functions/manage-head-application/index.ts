@@ -106,9 +106,34 @@ serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: `Application not found: ${applicationId}` }), { headers, status: 404 })
     }
 
-    // Idempotency
+    // Idempotency. A device can lose the response after the server completed the
+    // approval; report the completed state rather than making the admin guess
+    // whether it is safe to retry.
     if (application.status === "APPROVED") {
-      return new Response(JSON.stringify({ message: "Application is already approved", status: "APPROVED", application_id: applicationId }), { headers, status: 200 })
+      const { data: existingNotification } = await supabase
+        .from("notifications")
+        .select("id")
+        .eq("application_id", applicationId)
+        .eq("type", "HEAD_APPLICATION_APPROVED")
+        .maybeSingle()
+      const { data: existingEmailDelivery } = await supabase
+        .from("email_deliveries")
+        .select("status")
+        .eq("application_id", applicationId)
+        .eq("email_type", "HEAD_APPLICATION_APPROVED")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      return new Response(JSON.stringify({
+        message: "Application was already approved.",
+        status: "APPROVED",
+        application_id: applicationId,
+        community_id: application.community_id ?? null,
+        community_name: application.proposed_community_name,
+        notification_status: existingNotification ? "IN_APP_CREATED" : "IN_APP_PENDING",
+        email_status: existingEmailDelivery?.status ?? "NOT_SENT",
+      }), { headers, status: 200 })
     }
     if (application.status === "REJECTED" && action === "REJECT") {
       return new Response(JSON.stringify({ message: "Application is already rejected", status: "REJECTED", application_id: applicationId }), { headers, status: 200 })
@@ -280,19 +305,41 @@ serve(async (req: Request) => {
       }
 
       // ---- 5. Application record -------------------------------------------------
+      const approvedAt = new Date().toISOString()
       const updateResult = await supabase
         .from("head_applications")
         .update({
           status: "APPROVED",
+          // Keep both historical field names populated while older projects
+          // migrate. reviewed_* is the canonical audit pair.
+          reviewed_by: user.id,
+          reviewed_at: approvedAt,
           approved_by: user.id,
-          approved_at: new Date().toISOString(),
+          approved_at: approvedAt,
           applicant_user_id: applicantUserId,
-          updated_at: new Date().toISOString(),
+          community_id: communityId,
+          approval_completed_at: approvedAt,
+          updated_at: approvedAt,
         })
         .eq("id", applicationId)
 
       if (updateResult.error) {
-        await supabase.from("head_applications").update({ status: "APPROVED" }).eq("id", applicationId)
+        // Compatibility path for an installation that has not yet applied the
+        // notification migration. It still marks the application approved, but
+        // the migration is required for the database-backed notification.
+        const legacyUpdate = await supabase
+          .from("head_applications")
+          .update({
+            status: "APPROVED",
+            approved_by: user.id,
+            approved_at: approvedAt,
+            applicant_user_id: applicantUserId,
+            updated_at: approvedAt,
+          })
+          .eq("id", applicationId)
+        if (legacyUpdate.error) {
+          throw new Error(`Failed to complete approval: ${legacyUpdate.error.message}`)
+        }
       }
 
       // ---- 6. Audit + notification ------------------------------------------------
@@ -309,14 +356,42 @@ serve(async (req: Request) => {
         },
       }).catch((e: any) => console.warn("Audit log insert non-fatal warning:", e))
 
-      await supabase.from("notifications").insert({
-        recipient_user_id: applicantUserId,
-        application_id: applicationId,
-        community_id: communityId,
-        title: "Community application approved",
-        body: "Your application was approved. Check your email for login instructions.",
-        type: "HEAD_APPLICATION_APPROVED",
-      }).catch((e: any) => console.warn("Notification insert non-fatal warning:", e))
+      // The latest migration creates this alert in a database trigger at the
+      // same moment the status becomes APPROVED. This fallback preserves the
+      // notification for installations that deploy the function first. The
+      // unique index added by that migration makes it safe if both run.
+      let notificationStatus = "IN_APP_PENDING"
+      const { data: existingApprovalNotice, error: noticeLookupError } = await supabase
+        .from("notifications")
+        .select("id")
+        .eq("application_id", applicationId)
+        .eq("type", "HEAD_APPLICATION_APPROVED")
+        .maybeSingle()
+
+      if (existingApprovalNotice) {
+        notificationStatus = "IN_APP_CREATED"
+      } else if (noticeLookupError) {
+        console.warn("Approval notification lookup warning:", noticeLookupError.message)
+      } else {
+        const { error: noticeInsertError } = await supabase
+          .from("notifications")
+          .insert({
+            recipient_user_id: applicantUserId,
+            application_id: applicationId,
+            community_id: communityId,
+            title: "Community approved",
+            body: `Your community '${application.proposed_community_name}' is ready. Sign in as Community Head to continue.`,
+            type: "HEAD_APPLICATION_APPROVED",
+          })
+
+        // 23505 means the database trigger inserted it between the lookup and
+        // this fallback; that is a successful, not an error, outcome.
+        if (!noticeInsertError || noticeInsertError.code === "23505") {
+          notificationStatus = "IN_APP_CREATED"
+        } else {
+          console.warn("Approval notification insert warning:", noticeInsertError.message)
+        }
+      }
 
       // ---- 7. Email (now actually delivers the one-time password) -----------------
       const credentialsBlock = issueOtp
@@ -379,7 +454,9 @@ serve(async (req: Request) => {
           : "Application approved, but the email was not delivered — share the one-time password with the applicant manually.",
         status: "APPROVED",
         community_id: communityId,
+        community_name: application.proposed_community_name,
         applicant_user_id: applicantUserId,
+        notification_status: notificationStatus,
         email_status: emailStatus,
       }
       if (issueOtp && emailStatus !== "SENT") {
