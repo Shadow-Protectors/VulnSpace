@@ -1,12 +1,45 @@
 // @ts-nocheck
-// @ts-ignore (Suppresses IDE warning for Deno URL imports)
+// manage-head-application Edge Function
+//
+// APPROVE flow guarantees the approved head ALWAYS ends up with a usable
+// credential:
+//   - Applicant was an anonymous session user  -> their anon account is CONVERTED
+//     to a permanent email account and a one-time password (OTP) is issued.
+//   - Applicant email already has a real auth account -> nothing reset; the email
+//     tells them to sign in with their existing password.
+//   - No account at all -> a new account is created with an OTP.
+// When an OTP is issued it is included in the approval email, and (as a fallback
+// when email is not configured/sending fails) returned to the CALLING ADMIN in
+// the response so the password can be handed over manually.
+//
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "npm:@supabase/supabase-js@2"
 
 console.log("manage-head-application Edge Function running")
 
+// One-time password from a CSPRNG (Math.random is NOT safe for credentials)
+function generateOtp(length = 10): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789"
+  const bytes = new Uint8Array(length)
+  crypto.getRandomValues(bytes)
+  let out = ""
+  for (let i = 0; i < length; i++) out += chars[bytes[i] % chars.length]
+  return `Vuln!${out}#`
+}
+
+// profiles.username is UNIQUE — suffix randomness so two heads with the same
+// full name never collide (the old code upserted full_name and silently lost
+// must_change_password when it clashed).
+function makeProfileUsername(fullName: string): string {
+  const base = (fullName || "head").toLowerCase().replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "").slice(0, 18) || "head"
+  const bytes = new Uint8Array(4)
+  crypto.getRandomValues(bytes)
+  const suffix = Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("")
+  return `${base}-${suffix}`
+}
+
 serve(async (req: Request) => {
-  // CORS headers
   const headers = {
     "Content-Type": "application/json",
     "Access-Control-Allow-Origin": "*",
@@ -26,29 +59,21 @@ serve(async (req: Request) => {
       throw new Error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables.")
     }
 
-    // Initialize Supabase admin client with service_role key
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    // Extract auth header to identify the caller
     const authHeader = req.headers.get("Authorization")
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
-        headers,
-        status: 401,
-      })
+      return new Response(JSON.stringify({ error: "Missing Authorization header" }), { headers, status: 401 })
     }
 
-    // Get user from auth token
     const token = authHeader.replace("Bearer ", "").trim()
     const { data: { user }, error: userError } = await supabase.auth.getUser(token)
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired token. Please sign in again." }), {
-        headers,
-        status: 401,
-      })
+      return new Response(JSON.stringify({ error: "Invalid or expired session. Please sign out and sign in again." }), { headers, status: 401 })
     }
 
-    // Verify caller is a PLATFORM_ADMIN
+    // Platform-admin check is done SERVER-SIDE against the table (service role
+    // bypasses RLS), never trusting the client.
     const { data: isAdmin, error: adminError } = await supabase
       .from("platform_admins")
       .select("id")
@@ -56,13 +81,9 @@ serve(async (req: Request) => {
       .maybeSingle()
 
     if (adminError || !isAdmin) {
-      return new Response(JSON.stringify({ error: "Unauthorized: Only Platform Admins can perform this action" }), {
-        headers,
-        status: 403,
-      })
+      return new Response(JSON.stringify({ error: "Only Platform Admins can perform this action" }), { headers, status: 403 })
     }
 
-    // Parse request body
     const body = await req.json().catch(() => ({}))
     const applicationId = body.applicationId || body.application_id
     const rawAction = body.action || ""
@@ -70,15 +91,11 @@ serve(async (req: Request) => {
     const rejectionReason = body.reason || body.rejection_reason || "Does not meet community guidelines"
 
     if (!applicationId || !["APPROVE", "REJECT"].includes(action)) {
-      return new Response(JSON.stringify({ error: "Invalid payload: applicationId and action ('APPROVE' or 'REJECT') required" }), {
-        headers,
-        status: 400,
-      })
+      return new Response(JSON.stringify({ error: "Invalid payload: applicationId and action ('APPROVE' or 'REJECT') required" }), { headers, status: 400 })
     }
 
     console.log(`Executing ${action} on head_applications ${applicationId} by admin ${user.id}`)
 
-    // Fetch the application
     const { data: application, error: fetchError } = await supabase
       .from("head_applications")
       .select("*")
@@ -86,82 +103,106 @@ serve(async (req: Request) => {
       .single()
 
     if (fetchError || !application) {
-      return new Response(JSON.stringify({ error: `Application not found: ${fetchError?.message || applicationId}` }), {
-        headers,
-        status: 404,
-      })
+      return new Response(JSON.stringify({ error: `Application not found: ${applicationId}` }), { headers, status: 404 })
     }
 
-    // Idempotency: check if already resolved
+    // Idempotency
     if (application.status === "APPROVED") {
-      return new Response(JSON.stringify({ 
-        message: "Application is already approved", 
-        status: "APPROVED",
-        application_id: applicationId
-      }), {
-        headers,
-        status: 200,
-      })
+      return new Response(JSON.stringify({ message: "Application is already approved", status: "APPROVED", application_id: applicationId }), { headers, status: 200 })
     }
-
     if (application.status === "REJECTED" && action === "REJECT") {
-      return new Response(JSON.stringify({ 
-        message: "Application is already rejected", 
-        status: "REJECTED",
-        application_id: applicationId
-      }), {
-        headers,
-        status: 200,
-      })
+      return new Response(JSON.stringify({ message: "Application is already rejected", status: "REJECTED", application_id: applicationId }), { headers, status: 200 })
     }
 
     if (action === "APPROVE") {
-      let applicantUserId = application.applicant_user_id
+      let applicantUserId: string | null = application.applicant_user_id
+      const otp = generateOtp()
+      let issueOtp = false
 
-      // 1. If applicant has no user account, resolve or create one by email
-      if (!applicantUserId) {
-        const { data: userList } = await supabase.auth.admin.listUsers()
-        const existingUser = userList?.users?.find(
-          (u: any) => u.email?.toLowerCase() === application.email?.toLowerCase()
-        )
+      // ---- 1. Resolve the head's auth account --------------------------------
+      // Case A: application is linked to a user (usually an ANONYMOUS session
+      // created by the app before submitting). Anon users have no password —
+      // convert THIS account into a permanent email account + OTP.
+      if (applicantUserId) {
+        const { data: existing, error: byIdErr } = await supabase.auth.admin.getUserById(applicantUserId)
+        const extUser = existing?.user
+        const looksAnonymous = !!extUser && (extUser.is_anonymous === true || !extUser.email)
 
-        if (existingUser) {
-          applicantUserId = existingUser.id
-        } else {
-          const tempPassword = `VulnHead!${Math.random().toString(36).slice(-8)}#`
-
-          const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
+        if (byIdErr || !extUser) {
+          applicantUserId = null // stale reference — fall through to email path
+        } else if (looksAnonymous) {
+          const { error: convErr } = await supabase.auth.admin.updateUserById(applicantUserId, {
             email: application.email,
-            password: tempPassword,
+            password: otp,
             email_confirm: true,
             user_metadata: { full_name: application.full_name },
           })
+          if (convErr) throw new Error(`Failed to convert applicant account: ${convErr.message}`)
+          issueOtp = true
+        }
+        // else: real email/password account — keep their password, just link.
+      }
 
+      // Case B/C: not linked — find or create by email.
+      if (!applicantUserId) {
+        let existingUser: any = null
+        let page = 1
+        // Paginate fully — the old code only scanned page 1.
+        while (true) {
+          const { data: pageData } = await supabase.auth.admin.listUsers({ page, perPage: 200 })
+          const users = pageData?.users ?? []
+          existingUser = users.find((u: any) => u.email?.toLowerCase() === application.email?.toLowerCase()) ?? null
+          if (existingUser || users.length < 200) break
+          page += 1
+          if (page > 20) break
+        }
+
+        if (existingUser) {
+          applicantUserId = existingUser.id
+          if (existingUser.is_anonymous === true) {
+            const { error: convErr } = await supabase.auth.admin.updateUserById(applicantUserId, {
+              email: application.email,
+              password: otp,
+              email_confirm: true,
+              user_metadata: { full_name: application.full_name },
+            })
+            if (convErr) throw new Error(`Failed to convert applicant account: ${convErr.message}`)
+            issueOtp = true
+          }
+        } else {
+          const { data: newUser, error: createError } = await supabase.auth.admin.createUser({
+            email: application.email,
+            password: otp,
+            email_confirm: true,
+            user_metadata: { full_name: application.full_name },
+          })
           if (createError || !newUser?.user) {
-            throw new Error(`Failed to create Auth account for Community Head: ${createError?.message}`)
+            throw new Error(`Failed to create account for Community Head: ${createError?.message}`)
           }
           applicantUserId = newUser.user.id
+          issueOtp = true
         }
       }
 
-      console.log(`Resolved Community Head user UUID: ${applicantUserId}`)
+      console.log(`Resolved Community Head user UUID: ${applicantUserId} (otp issued: ${issueOtp})`)
 
-      // 2. Ensure profiles record exists (resilient against optional must_change_password column)
+      // ---- 2. Profile ----------------------------------------------------------
+      const profileUsername = makeProfileUsername(application.full_name)
       try {
         await supabase.from("profiles").upsert({
           id: applicantUserId,
-          username: application.full_name,
-          must_change_password: true,
+          username: profileUsername,
+          must_change_password: issueOtp,
         }, { onConflict: "id" })
       } catch (_pErr) {
-        // Fallback if must_change_password does not exist
+        // Fallback if must_change_password column is missing in older schemas
         await supabase.from("profiles").upsert({
           id: applicantUserId,
-          username: application.full_name,
+          username: profileUsername,
         }, { onConflict: "id" }).catch((e) => console.warn("profiles upsert fallback:", e))
       }
 
-      // 3. Create or activate the community
+      // ---- 3. Community --------------------------------------------------------
       let communityId: string | null = null
       const { data: existingCommunity } = await supabase
         .from("communities")
@@ -173,18 +214,10 @@ serve(async (req: Request) => {
         communityId = existingCommunity.id
         await supabase
           .from("communities")
-          .update({ 
-            created_by: applicantUserId,
-            status: "ACTIVE" 
-          })
+          .update({ created_by: applicantUserId, status: "ACTIVE" })
           .eq("id", communityId)
-          .catch(() => {
-            // If status column doesn't exist, update created_by only
-            return supabase.from("communities").update({ created_by: applicantUserId }).eq("id", communityId)
-          })
+          .catch(() => supabase.from("communities").update({ created_by: applicantUserId }).eq("id", communityId))
       } else {
-        // Try inserting with status: ACTIVE, fallback to basic insert if status column absent
-        let newCommunityData: any = null
         const insertWithStatus = await supabase
           .from("communities")
           .insert({
@@ -210,19 +243,16 @@ serve(async (req: Request) => {
           if (insertBasic.error || !insertBasic.data) {
             throw new Error(`Failed to create community: ${insertBasic.error?.message}`)
           }
-          newCommunityData = insertBasic.data
+          communityId = insertBasic.data.id
         } else {
-          newCommunityData = insertWithStatus.data
+          communityId = insertWithStatus.data.id
         }
-
-        communityId = newCommunityData.id
       }
 
       console.log(`Community established with ID: ${communityId}`)
 
-      // 4. Assign Community Head role (resilient against enum vs text for role)
-      let roleAssigned = false
-      const roleTry1 = await supabase
+      // ---- 4. Head role ---------------------------------------------------------
+      const roleTry = await supabase
         .from("community_members")
         .upsert({
           community_id: communityId,
@@ -232,10 +262,8 @@ serve(async (req: Request) => {
           status: "ACTIVE",
         }, { onConflict: "community_id, user_id" })
 
-      if (!roleTry1.error) {
-        roleAssigned = true
-      } else {
-        console.warn("COMMUNITY_HEAD role upsert failed, retrying with legacy HEAD:", roleTry1.error)
+      if (roleTry.error) {
+        console.warn("COMMUNITY_HEAD upsert failed, retrying with legacy HEAD:", roleTry.error)
         const roleTry2 = await supabase
           .from("community_members")
           .upsert({
@@ -249,10 +277,9 @@ serve(async (req: Request) => {
         if (roleTry2.error) {
           throw new Error(`Failed to assign community head role: ${roleTry2.error.message}`)
         }
-        roleAssigned = true
       }
 
-      // 5. Update application record to APPROVED
+      // ---- 5. Application record -------------------------------------------------
       const updateResult = await supabase
         .from("head_applications")
         .update({
@@ -265,14 +292,10 @@ serve(async (req: Request) => {
         .eq("id", applicationId)
 
       if (updateResult.error) {
-        // Fallback update with minimal columns if approved_by/at don't exist
-        await supabase
-          .from("head_applications")
-          .update({ status: "APPROVED" })
-          .eq("id", applicationId)
+        await supabase.from("head_applications").update({ status: "APPROVED" }).eq("id", applicationId)
       }
 
-      // 6. Insert Audit Log (non-blocking)
+      // ---- 6. Audit + notification ------------------------------------------------
       await supabase.from("audit_logs").insert({
         actor_id: user.id,
         action: "COMMUNITY_HEAD_APPLICATION_APPROVED",
@@ -286,7 +309,6 @@ serve(async (req: Request) => {
         },
       }).catch((e: any) => console.warn("Audit log insert non-fatal warning:", e))
 
-      // 7. Insert In-app Notification for applicant (non-blocking)
       await supabase.from("notifications").insert({
         recipient_user_id: applicantUserId,
         application_id: applicationId,
@@ -296,7 +318,11 @@ serve(async (req: Request) => {
         type: "HEAD_APPLICATION_APPROVED",
       }).catch((e: any) => console.warn("Notification insert non-fatal warning:", e))
 
-      // 8. Handle Email notification (provider failure does NOT rollback approval)
+      // ---- 7. Email (now actually delivers the one-time password) -----------------
+      const credentialsBlock = issueOtp
+        ? `\nSign-in email: ${application.email}\nOne-time password: ${otp}\n\nOpen the VulnSpace app, choose Community Head Login and sign in with these credentials. You will be asked to set your own password on first login. The one-time password stops working after that.\n`
+        : `\nSign in to the VulnSpace app with your existing password for ${application.email}. Your account now has Community Head access to '${application.proposed_community_name}'.\n`
+
       const resendApiKey = Deno.env.get("RESEND_API_KEY")
       let emailStatus = "NOT_SENT"
       let errorMessage: string | null = null
@@ -314,7 +340,7 @@ serve(async (req: Request) => {
               from: "VulnSpace <no-reply@vulnspace.org>",
               to: [application.email],
               subject: "Your VulnSpace community application was approved",
-              text: `Hello ${application.full_name},\n\nYour application to create the cybersecurity community '${application.proposed_community_name}' has been approved.\n\nLogin email:\n${application.email}\n\nUse the VulnSpace app to sign in. You will be prompted to set up your password during your first login.\n\nWelcome to VulnSpace!`,
+              text: `Hello ${application.full_name},\n\nYour application to create the cybersecurity community '${application.proposed_community_name}' has been approved.\n${credentialsBlock}\nWelcome to VulnSpace!`,
             }),
           })
           const emailJson = await emailRes.json().catch(() => null)
@@ -331,7 +357,6 @@ serve(async (req: Request) => {
         }
       }
 
-      // Record email delivery audit (non-blocking)
       await supabase.from("email_deliveries").insert({
         recipient_email: application.email,
         recipient_user_id: applicantUserId,
@@ -343,51 +368,51 @@ serve(async (req: Request) => {
         sent_at: emailStatus === "SENT" ? new Date().toISOString() : null,
       }).catch((e: any) => console.warn("email_deliveries insert non-fatal warning:", e))
 
-      console.log(`Approval completed successfully for application ${applicationId}`)
+      console.log(`Approval completed for ${applicationId}; email_status=${emailStatus}`)
 
-      return new Response(JSON.stringify({
-        message: emailStatus === "FAILED" 
-          ? "Application approved, but email delivery failed." 
-          : "Application approved successfully and community created",
+      // Fallback credential delivery: if (and only if) the email was not sent,
+      // return the OTP to the authenticated PLATFORM ADMIN so they can pass it
+      // to the head manually. Never expose this to any other caller.
+      const responseBody: Record<string, unknown> = {
+        message: emailStatus === "SENT"
+          ? "Application approved. Sign-in instructions emailed to the applicant."
+          : "Application approved, but the email was not delivered — share the one-time password with the applicant manually.",
         status: "APPROVED",
         community_id: communityId,
         applicant_user_id: applicantUserId,
         email_status: emailStatus,
-      }), { headers, status: 200 })
+      }
+      if (issueOtp && emailStatus !== "SENT") {
+        responseBody.one_time_password = otp
+      }
+
+      return new Response(JSON.stringify(responseBody), { headers, status: 200 })
 
     } else {
-      // REJECT ACTION
+      // ---- REJECT ---------------------------------------------------------------
       const rejectUpdate = await supabase
         .from("head_applications")
         .update({
           status: "REJECTED",
-          approved_by: user.id,
-          approved_at: new Date().toISOString(),
+          reviewed_by: user.id,
+          reviewed_at: new Date().toISOString(),
           rejection_reason: rejectionReason,
           updated_at: new Date().toISOString(),
         })
         .eq("id", applicationId)
 
       if (rejectUpdate.error) {
-        await supabase
-          .from("head_applications")
-          .update({ status: "REJECTED" })
-          .eq("id", applicationId)
+        await supabase.from("head_applications").update({ status: "REJECTED" }).eq("id", applicationId)
       }
 
-      // Insert Audit Log (non-blocking)
       await supabase.from("audit_logs").insert({
         actor_id: user.id,
         action: "COMMUNITY_HEAD_APPLICATION_REJECTED",
         target_type: "HEAD_APPLICATION",
         target_id: applicationId,
-        metadata: {
-          applicant_email: application.email,
-          reason: rejectionReason,
-        },
+        metadata: { applicant_email: application.email, reason: rejectionReason },
       }).catch((e: any) => console.warn("Reject audit log warning:", e))
 
-      // In-app notification if applicant has user account (non-blocking)
       if (application.applicant_user_id) {
         await supabase.from("notifications").insert({
           recipient_user_id: application.applicant_user_id,
@@ -397,7 +422,7 @@ serve(async (req: Request) => {
         }).catch((e: any) => console.warn("Reject notification warning:", e))
       }
 
-      console.log(`Rejection completed successfully for application ${applicationId}`)
+      console.log(`Rejection completed for application ${applicationId}`)
 
       return new Response(JSON.stringify({
         message: "Application rejected successfully",
@@ -408,9 +433,6 @@ serve(async (req: Request) => {
 
   } catch (error) {
     console.error("manage-head-application caught error:", error)
-    return new Response(JSON.stringify({ error: (error as Error).message }), {
-      headers,
-      status: 400,
-    })
+    return new Response(JSON.stringify({ error: (error as Error).message }), { headers, status: 400 })
   }
 })

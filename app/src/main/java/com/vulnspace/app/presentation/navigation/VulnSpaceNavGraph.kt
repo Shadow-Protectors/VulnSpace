@@ -266,6 +266,10 @@ private fun MemberNavGraph(
     val feedState by feedViewModel.uiState.collectAsStateWithLifecycle()
     val submitState by submitVm.uiState.collectAsStateWithLifecycle()
 
+    // Load the real feed (and community name) as soon as the community is known
+    LaunchedEffect(communityId) { feedViewModel.loadFeed(communityId) }
+    val communityDisplayName = feedState.communityName.ifBlank { "My Community" }
+
     // Build nav items based on role — resolved server-side, not from client claim
     val navItems = if (role == "COMMUNITY_HEAD") getHeadNavItems() else getMemberNavItems()
 
@@ -304,8 +308,8 @@ private fun MemberNavGraph(
                     onToggleResources = feedViewModel::toggleResourcesOnly,
                     onRefresh = feedViewModel::refresh,
                     onContentClick = { id -> navController.navigate(Destinations.contentDetail(id)) },
-                    onBookmark = { /* TODO: toggle bookmark */ },
-                    communityName = "My Community"
+                    onBookmark = feedViewModel::toggleBookmark,
+                    communityName = communityDisplayName
                 )
             }
             composable(Destinations.SUBMIT_URL) {
@@ -321,48 +325,61 @@ private fun MemberNavGraph(
             }
             composable(Destinations.CONTENT_DETAIL) { backStackEntry ->
                 val contentId = backStackEntry.arguments?.getString("contentId") ?: ""
+                val detailVm: ContentDetailViewModel = viewModel()
+                LaunchedEffect(contentId) { detailVm.load(contentId) }
+                val detailState by detailVm.uiState.collectAsStateWithLifecycle()
                 ContentDetailScreen(
-                    content = null, // TODO: load from VM
-                    isLoading = false,
-                    isBookmarked = false,
-                    onBookmark = {},
-                    onReport = {},
+                    content = detailState.content,
+                    isLoading = detailState.isLoading,
+                    isBookmarked = detailState.isBookmarked,
+                    onBookmark = detailVm::toggleBookmark,
+                    onReport = detailVm::report,
                     onBack = { navController.popBackStack() }
                 )
             }
             composable(Destinations.BOOKMARKS) {
+                val bookmarksVm: BookmarksViewModel = viewModel()
+                LaunchedEffect(Unit) { bookmarksVm.load() }
+                val bookmarksState by bookmarksVm.uiState.collectAsStateWithLifecycle()
                 BookmarksScreen(
-                    bookmarks = emptyList(),
-                    isLoading = false,
-                    error = null,
-                    searchQuery = "",
-                    onSearch = {},
-                    onRemoveBookmark = {},
+                    bookmarks = bookmarksState.visible,
+                    isLoading = bookmarksState.isLoading,
+                    error = bookmarksState.error,
+                    searchQuery = bookmarksState.searchQuery,
+                    onSearch = bookmarksVm::onSearch,
+                    onRemoveBookmark = bookmarksVm::removeBookmark,
                     onContentClick = { id -> navController.navigate(Destinations.contentDetail(id)) },
-                    showEventsOnly = false,
-                    showResourcesOnly = false,
-                    onToggleEvents = {},
-                    onToggleResources = {}
+                    showEventsOnly = bookmarksState.showEventsOnly,
+                    showResourcesOnly = bookmarksState.showResourcesOnly,
+                    onToggleEvents = bookmarksVm::toggleEvents,
+                    onToggleResources = bookmarksVm::toggleResources
                 )
             }
             composable(Destinations.NOTIFICATIONS) {
-                NotificationsScreen(notifications = emptyList(), isLoading = false)
+                val notificationsVm: NotificationsViewModel = viewModel()
+                LaunchedEffect(Unit) { notificationsVm.load() }
+                val notificationsState by notificationsVm.uiState.collectAsStateWithLifecycle()
+                NotificationsScreen(
+                    notifications = notificationsState.notifications,
+                    isLoading = notificationsState.isLoading
+                )
             }
             composable(Destinations.PROFILE) {
                 ProfileScreen(
                     username = username,
-                    communityName = "My Community",
+                    communityName = communityDisplayName,
                     role = role,
                     onApplyAsHead = { navController.navigate(Destinations.HEAD_APPLICATION_FORM) },
                     onSignOut = onSignOut
                 )
             }
             composable(Destinations.HEAD_APPLICATION_FORM) {
-                var formState by remember { mutableStateOf(HeadApplicationFormState()) }
+                val appVm: HeadApplicationViewModel = viewModel()
+                val formState by appVm.uiState.collectAsStateWithLifecycle()
                 HeadApplicationFormScreen(
                     state = formState,
-                    onFieldChange = { formState = it },
-                    onSubmit = { formState = formState.copy(isSubmitted = true) },
+                    onFieldChange = appVm::onFieldChange,
+                    onSubmit = { appVm.submitApplication(onSuccess = { navController.popBackStack() }) },
                     onBack = { navController.popBackStack() }
                 )
             }
@@ -370,33 +387,43 @@ private fun MemberNavGraph(
             if (role == "COMMUNITY_HEAD") {
                 composable(Destinations.HEAD_CONSOLE) {
                     HeadConsoleScreen(
-                        communityName = "My Community",
+                        communityName = communityDisplayName,
                         onInviteCodesClick = { navController.navigate(Destinations.INVITE_CODES) },
                         onMembersClick = { navController.navigate(Destinations.MEMBER_MANAGEMENT) },
                         onContentClick = { navController.navigate(Destinations.CONTENT_MANAGEMENT) }
                     )
                 }
                 composable(Destinations.INVITE_CODES) {
+                    val headVm: HeadConsoleViewModel = viewModel()
+                    LaunchedEffect(communityId) { headVm.initialize(communityId) }
+                    val inviteCodes by headVm.codes.collectAsStateWithLifecycle()
+                    val invitesLoading by headVm.isLoading.collectAsStateWithLifecycle()
+                    val invitesError by headVm.errorMessage.collectAsStateWithLifecycle()
                     InviteCodeManagementScreen(
-                        codes = emptyList(),
-                        isLoading = false,
-                        onGenerateCode = {},
-                        onRevokeCode = {},
+                        codes = inviteCodes,
+                        isLoading = invitesLoading,
+                        errorMessage = invitesError,
+                        onGenerateCode = headVm::generateCode,
+                        onRevokeCode = headVm::revokeCode,
                         onBack = { navController.popBackStack() }
                     )
                 }
                 composable(Destinations.MEMBER_MANAGEMENT) {
+                    val membersVm: MemberManagementViewModel = viewModel()
+                    LaunchedEffect(communityId) { membersVm.initialize(communityId) }
+                    val membersState by membersVm.uiState.collectAsStateWithLifecycle()
                     MemberManagementScreen(
-                        members = emptyList(),
-                        isLoading = false,
-                        searchQuery = "",
-                        onSearch = {},
-                        onRemoveMember = {},
+                        members = membersState.visible,
+                        isLoading = membersState.isLoading,
+                        searchQuery = membersState.searchQuery,
+                        errorMessage = membersState.errorMessage,
+                        onSearch = membersVm::onSearch,
+                        onRemoveMember = membersVm::removeMember,
                         onBack = { navController.popBackStack() }
                     )
                 }
                 composable(Destinations.CONTENT_MANAGEMENT) {
-                    // Reuses home feed UI — TODO: head-specific actions
+                    // Heads review the same live feed; detail screen carries the actions
                     HomeFeedScreen(
                         state = feedState,
                         onSearch = feedViewModel::onSearchChange,
@@ -404,8 +431,8 @@ private fun MemberNavGraph(
                         onToggleEvents = feedViewModel::toggleEventsOnly,
                         onToggleResources = feedViewModel::toggleResourcesOnly,
                         onRefresh = feedViewModel::refresh,
-                        onContentClick = {},
-                        onBookmark = {},
+                        onContentClick = { id -> navController.navigate(Destinations.contentDetail(id)) },
+                        onBookmark = feedViewModel::toggleBookmark,
                         communityName = "Manage Content"
                     )
                 }

@@ -99,6 +99,7 @@ private fun ConsoleMenuCard(
 fun InviteCodeManagementScreen(
     codes: List<InviteLink>,
     isLoading: Boolean,
+    errorMessage: String? = null,
     onGenerateCode: () -> Unit,
     onRevokeCode: (String) -> Unit,
     onBack: () -> Unit
@@ -118,6 +119,17 @@ fun InviteCodeManagementScreen(
                 }
             )
             HorizontalDivider(color = BlueBorder)
+
+            if (errorMessage != null) {
+                Surface(color = DangerRed.copy(alpha = 0.12f)) {
+                    Text(
+                        text = errorMessage,
+                        color = DangerRed,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
+            }
 
             LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (isLoading) { item { LoadingState() }; return@LazyColumn }
@@ -164,7 +176,7 @@ fun InviteCodeManagementScreen(
 
 @Composable
 private fun InviteCodeCard(code: InviteLink, onShare: () -> Unit, onRevoke: () -> Unit) {
-    val isActive = code.status == "ACTIVE"
+    val isActive = code.isActive
     CyberCard {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -206,6 +218,7 @@ fun MemberManagementScreen(
     members: List<Member>,
     isLoading: Boolean,
     searchQuery: String,
+    errorMessage: String? = null,
     onSearch: (String) -> Unit,
     onRemoveMember: (String) -> Unit,
     onBack: () -> Unit
@@ -220,6 +233,17 @@ fun MemberManagementScreen(
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") } }
             )
             HorizontalDivider(color = BlueBorder)
+
+            if (errorMessage != null) {
+                Surface(color = DangerRed.copy(alpha = 0.12f)) {
+                    Text(
+                        text = errorMessage,
+                        color = DangerRed,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)
+                    )
+                }
+            }
 
             LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
@@ -248,10 +272,16 @@ fun MemberManagementScreen(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("@${member.username}", style = MaterialTheme.typography.titleMedium)
-                                Text("Joined ${member.joinedAt.take(10)}", style = MaterialTheme.typography.labelSmall)
+                                Text(
+                                    if (member.role == "COMMUNITY_HEAD" || member.role == "HEAD") "Head · Joined ${member.joinedAt.take(10)}"
+                                    else "Joined ${member.joinedAt.take(10)}",
+                                    style = MaterialTheme.typography.labelSmall
+                                )
                             }
-                            IconButton(onClick = { memberToRemove = member }) {
-                                Icon(Icons.Filled.PersonRemove, contentDescription = "Remove member", tint = DangerRed)
+                            if (member.role != "COMMUNITY_HEAD" && member.role != "HEAD") {
+                                IconButton(onClick = { memberToRemove = member }) {
+                                    Icon(Icons.Filled.PersonRemove, contentDescription = "Remove member", tint = DangerRed)
+                                }
                             }
                         }
                     }
