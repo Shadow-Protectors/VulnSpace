@@ -47,9 +47,7 @@ fun WelcomeScreen(
             // Logo mark (Double-click to access hidden Platform Admin Login)
             Box(
                 modifier = Modifier
-                    .size(88.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(PrimaryBlue)
+                    .size(110.dp)
                     .pointerInput(Unit) {
                         detectTapGestures(
                             onDoubleTap = { onAdminLogin() }
@@ -57,11 +55,10 @@ fun WelcomeScreen(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    Icons.Filled.Security,
-                    contentDescription = "VulnSpace",
-                    tint = WhiteSurface,
-                    modifier = Modifier.size(48.dp)
+                androidx.compose.foundation.Image(
+                    painter = androidx.compose.ui.res.painterResource(id = com.vulnspace.app.R.drawable.app_logo),
+                    contentDescription = "VulnSpace Logo",
+                    modifier = Modifier.fillMaxSize()
                 )
             }
 
