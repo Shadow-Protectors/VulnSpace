@@ -4,32 +4,26 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.vulnspace.app.presentation.navigation.VulnSpaceNavGraph
+import com.vulnspace.app.ui.theme.AppBackground
+import com.vulnspace.app.ui.theme.VulnSpaceTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
+            VulnSpaceTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
+                    color = AppBackground
                 ) {
-                    Greeting("VulnSpace")
+                    // Root session router — resolves role from Supabase
+                    // and directs to the correct navigation graph
+                    VulnSpaceNavGraph()
                 }
             }
         }
     }
-}
-
-@Composable
-fun Greeting(name: String, modifier: Modifier = Modifier) {
-    Text(
-        text = "Welcome to $name!",
-        modifier = modifier
-    )
 }
