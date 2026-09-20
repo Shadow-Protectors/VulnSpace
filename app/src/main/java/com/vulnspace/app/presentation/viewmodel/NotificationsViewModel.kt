@@ -41,7 +41,8 @@ class NotificationsViewModel : ViewModel() {
                     loadedOnce = true
                     markAllRead(result)
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                android.util.Log.e("NotificationsViewModel", "Failed to load notifications: ${e.message}", e)
                 _uiState.update { it.copy(isLoading = false) }
             }
         }

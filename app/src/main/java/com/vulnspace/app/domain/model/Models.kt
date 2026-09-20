@@ -45,8 +45,11 @@ data class InviteLink(
 data class AppNotification(
     val id: String,
     @SerialName("recipient_user_id") val userId: String = "",
-    val title: String,
-    val body: String,
+    @SerialName("application_id") val applicationId: String? = null,
+    @SerialName("community_id") val communityId: String? = null,
+    val title: String = "",
+    val body: String = "",
+    val type: String? = null,
     @SerialName("read_at") val readAt: String? = null,
     @SerialName("created_at") val createdAt: String = ""
 ) {

@@ -82,18 +82,12 @@ class MemberManagementViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             try {
-                val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
                 val response = SupabaseApi.client.functions.invoke(
                     function = "manage-member",
                     body = buildJsonObject {
                         put("action", "REMOVE")
                         put("community_id", communityId)
                         put("member_id", memberId)
-                    },
-                    headers = io.ktor.http.Headers.build {
-                        if (!token.isNullOrBlank()) {
-                            append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
-                        }
                     }
                 )
 

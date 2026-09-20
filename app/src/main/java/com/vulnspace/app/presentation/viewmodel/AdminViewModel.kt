@@ -89,21 +89,19 @@ class AdminViewModel : ViewModel() {
         val serverError = Regex("\"(?:error|message)\"\\s*:\\s*\"([^\"]+)\"")
             .find(raw)?.groupValues?.get(1)
 
-        val target = serverError ?: raw
+        // Strip any literal URL instead of nuking the whole message on "http"
+        val target = (serverError ?: raw).replace(Regex("https?://\\S+"), "[redacted]")
         val lower = target.lowercase()
 
         return when {
-            // Hide actual secrets/URLs — not harmless words like "token".
-            // Edge Function {"error": ...} payloads are operator-curated and safe.
-            lower.contains("bearer ") || lower.contains("apikey") ||
-                    lower.contains("eyj") || lower.contains("http") ->
+            lower.contains("bearer ") || lower.contains("apikey") || lower.contains("eyj") ->
                 defaultMessage
             lower.contains("permission denied") || lower.contains("42501") ->
                 "Access denied: Missing database permissions. Run the latest SQL migration and verify your admin status."
             lower.contains("failed to fetch") || lower.contains("network") ||
-                    lower.contains("connect") || lower.contains("timeout") ->
+                    lower.contains("timeout") ->
                 "Network error: Please check your connection and try again."
-            target.isNotBlank() && target.length < 160 && !target.contains("{") ->
+            target.isNotBlank() && target.length < 240 && !target.contains("{") ->
                 target
             else ->
                 defaultMessage
@@ -115,6 +113,10 @@ class AdminViewModel : ViewModel() {
             .find(body)
             ?.groupValues
             ?.getOrNull(1)
+
+    fun clearErrorMessage() {
+        _errorMessage.value = null
+    }
 
     fun dismissApprovalResult() {
         _approvalResult.value = null
@@ -271,18 +273,12 @@ class AdminViewModel : ViewModel() {
             val approvedApplication = _applications.value.firstOrNull { it.id == applicationId }
             try {
                 android.util.Log.d("AdminViewModel", "Invoking manage-head-application for APPROVE: $applicationId")
-                val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
                 val response = SupabaseApi.client.functions.invoke(
                     function = "manage-head-application",
                     body = buildJsonObject {
                         put("applicationId", applicationId)
                         put("application_id", applicationId)
                         put("action", "APPROVE")
-                    },
-                    headers = io.ktor.http.Headers.build {
-                        if (!token.isNullOrBlank()) {
-                            append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
-                        }
                     }
                 )
                 android.util.Log.d("AdminViewModel", "Approval function response received")
@@ -303,14 +299,12 @@ class AdminViewModel : ViewModel() {
                 // and approval record are complete. Its response also tells us whether the
                 // durable in-app approval alert was created and whether email was delivered.
                 val manualOtp = responseString(responseText, "one_time_password")
-                val emailStatus = responseString(responseText, "email_status") ?: "NOT_SENT"
                 val notificationStatus = responseString(responseText, "notification_status") ?: "IN_APP_PENDING"
                 _approvalResult.value = ApprovalResult(
                     communityName = responseString(responseText, "community_name")
                         ?: approvedApplication?.proposed_community_name
                         ?: "Approved community",
                     applicantName = approvedApplication?.full_name ?: "The applicant",
-                    emailStatus = emailStatus,
                     notificationStatus = notificationStatus,
                     oneTimePassword = manualOtp
                 )
@@ -337,7 +331,6 @@ class AdminViewModel : ViewModel() {
             _errorMessage.value = null
             try {
                 android.util.Log.d("AdminViewModel", "Invoking manage-head-application for REJECT: $applicationId")
-                val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
                 val response = SupabaseApi.client.functions.invoke(
                     function = "manage-head-application",
                     body = buildJsonObject {
@@ -346,11 +339,6 @@ class AdminViewModel : ViewModel() {
                         put("action", "REJECT")
                         put("reason", reason.trim())
                         put("rejection_reason", reason.trim())
-                    },
-                    headers = io.ktor.http.Headers.build {
-                        if (!token.isNullOrBlank()) {
-                            append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
-                        }
                     }
                 )
                 android.util.Log.d("AdminViewModel", "Reject function response received")

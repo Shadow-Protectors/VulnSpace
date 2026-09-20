@@ -77,7 +77,6 @@ class SubmitUrlViewModel : ViewModel() {
                 delay(300)
                 _uiState.update { it.copy(step = SubmitStep.ANALYZING_PAGE) }
 
-                val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
                 val response = SupabaseApi.client.functions.invoke(
                     function = "submit-content-url",
                     body = buildJsonObject {
@@ -85,11 +84,6 @@ class SubmitUrlViewModel : ViewModel() {
                         put("url", url)
                         if (_uiState.value.selectedCategory.isNotBlank()) {
                             put("category", _uiState.value.selectedCategory)
-                        }
-                    },
-                    headers = io.ktor.http.Headers.build {
-                        if (!token.isNullOrBlank()) {
-                            append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
                         }
                     }
                 )

@@ -69,9 +69,6 @@ class UsernameSetupViewModel : ViewModel() {
                     body = buildJsonObject {
                         put("code", inviteCode.trim())
                         put("username", trimmedUsername)
-                    },
-                    headers = io.ktor.http.Headers.build {
-                        append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
                     }
                 )
 

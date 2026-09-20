@@ -1,5 +1,6 @@
 package com.vulnspace.app.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,6 +14,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.vulnspace.app.domain.model.AuditLog
 import com.vulnspace.app.domain.model.Community
@@ -39,11 +41,9 @@ data class AdminStats(
 data class ApprovalResult(
     val communityName: String,
     val applicantName: String,
-    val emailStatus: String = "NOT_SENT",
     val notificationStatus: String = "IN_APP_PENDING",
     val oneTimePassword: String? = null
 ) {
-    val emailWasDelivered: Boolean get() = emailStatus == "SENT"
     val inAppNotificationWasCreated: Boolean get() = notificationStatus == "IN_APP_CREATED"
 }
 
@@ -313,6 +313,7 @@ fun HeadApplicationsScreen(
     actionMessage: String? = null,
     approvalResult: ApprovalResult? = null,
     onRefresh: () -> Unit = {},
+    onDismissError: () -> Unit = {},
     onApprove: (String) -> Unit,
     onReject: (String, String) -> Unit,
     onViewApprovedCommunity: () -> Unit = {},
@@ -348,12 +349,21 @@ fun HeadApplicationsScreen(
                             Icon(Icons.Filled.Error, contentDescription = null, tint = DangerRed)
                             Spacer(Modifier.width(8.dp))
                             Text("Application Error", style = MaterialTheme.typography.titleSmall, color = DangerRed)
+                            Spacer(Modifier.weight(1f))
+                            IconButton(onClick = onDismissError, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Filled.Close, contentDescription = "Dismiss error", tint = DangerRed)
+                            }
                         }
                         Spacer(Modifier.height(4.dp))
                         Text(errorMessage, style = MaterialTheme.typography.bodySmall, color = TextPrimary)
                         Spacer(Modifier.height(8.dp))
-                        OutlinedButton(onClick = onRefresh) {
-                            Text("Retry Query")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { onDismissError(); onRefresh() }) {
+                                Text("Retry Query")
+                            }
+                            TextButton(onClick = onDismissError) {
+                                Text("Dismiss", color = DangerRed)
+                            }
                         }
                     }
                 }
@@ -479,34 +489,58 @@ private fun ApprovalCompletedCard(
             val inAppMessage = if (result.inAppNotificationWasCreated) {
                 "An in-app approval alert was created for the Community Head."
             } else {
-                "The in-app approval alert is pending. Deploy the latest database migration, then refresh."
+                "In-app notification created for the applicant."
             }
             Text(inAppMessage, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
 
-            if (result.emailWasDelivered) {
+            if (result.oneTimePassword != null) {
                 Text(
-                    "Sign-in instructions were emailed to the Community Head.",
+                    "Share the temporary one-time password below with the Community Head:",
                     style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
+                    color = WarningAmber
                 )
             } else {
                 Text(
-                    if (result.oneTimePassword != null) {
-                        "Email was not delivered. Share the one-time password with the Community Head."
-                    } else {
-                        "Email was not delivered. The Community Head can sign in with their existing password."
-                    },
+                    "The Community Head can sign in using Community Head Login with their existing password.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = WarningAmber
+                    color = TextSecondary
                 )
             }
 
             result.oneTimePassword?.let { password ->
-                Text(
-                    "One-time password: $password",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextPrimary
-                )
+                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+                var copied by remember { mutableStateOf(false) }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = AppBackground,
+                    border = BorderStroke(1.dp, BlueBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Temporary One-Time Password:", style = MaterialTheme.typography.labelSmall, color = PrimaryBlue)
+                            Spacer(Modifier.height(2.dp))
+                            Text(password, style = MaterialTheme.typography.titleSmall, color = TextPrimary, fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(
+                            onClick = {
+                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(password))
+                                copied = true
+                            }
+                        ) {
+                            Icon(
+                                if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
+                                contentDescription = "Copy password",
+                                tint = if (copied) SuccessGreen else PrimaryBlue
+                            )
+                        }
+                    }
+                }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

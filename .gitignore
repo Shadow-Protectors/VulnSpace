@@ -59,9 +59,9 @@ captures/
 google-services.json
 
 # Supabase
-supabase/.temp/
-!supabase/migrations/
-!supabase/migrations/*.sql
+/supabase
+/supabase/
+supabase/
 
 # Custom exclusions
 /plan

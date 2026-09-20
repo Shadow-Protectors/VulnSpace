@@ -485,6 +485,7 @@ private fun AdminNavGraph(userId: String, onSignOut: () -> Unit) {
                 actionMessage = actionMessage,
                 approvalResult = approvalResult,
                 onRefresh = adminVm::loadApplications,
+                onDismissError = adminVm::clearErrorMessage,
                 onApprove = adminVm::approveApplication,
                 onReject = adminVm::rejectApplication,
                 onViewApprovedCommunity = {

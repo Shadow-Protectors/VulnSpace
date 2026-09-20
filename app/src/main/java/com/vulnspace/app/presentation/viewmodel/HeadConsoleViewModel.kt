@@ -104,15 +104,9 @@ class HeadConsoleViewModel : ViewModel() {
      * message when the function responds with a non-2xx status.
      */
     private suspend fun invokeManageInviteLink(body: kotlinx.serialization.json.JsonObject) {
-        val token = SupabaseApi.client.auth.currentAccessTokenOrNull()
         val response = SupabaseApi.client.functions.invoke(
             function = "manage-invite-link",
-            body = body,
-            headers = io.ktor.http.Headers.build {
-                if (!token.isNullOrBlank()) {
-                    append(io.ktor.http.HttpHeaders.Authorization, "Bearer $token")
-                }
-            }
+            body = body
         )
         if (response.status.value !in 200..299) {
             val text = try { response.bodyAsText() } catch (_: Exception) { "" }

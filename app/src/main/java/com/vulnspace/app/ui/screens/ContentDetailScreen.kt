@@ -93,7 +93,7 @@ fun ContentDetailScreen(
                             }
                             if (content.startDate != null) DetailRow(Icons.Filled.CalendarToday, "Start Date", content.startDate)
                             if (content.endDate != null) DetailRow(Icons.Filled.CalendarViewWeek, "End Date", content.endDate)
-                            if (content.mode != null) DetailRow(Icons.Filled.Videocam, "Mode", content.mode)
+                            content.mode?.let { mode -> DetailRow(Icons.Filled.Videocam, "Mode", mode) }
                             if (content.location != null) DetailRow(Icons.Filled.LocationOn, "Location", content.location)
                         }
                     }
