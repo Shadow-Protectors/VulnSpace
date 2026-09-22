@@ -26,7 +26,10 @@ object SupabaseApi {
         supabaseKey = SUPABASE_ANON_KEY
     ) {
         defaultSerializer = KotlinXSerializer(customJson)
-        install(Auth)
+        install(Auth) {
+            scheme = "vulnspace"
+            host = "login-callback"
+        }
         install(Postgrest)
         install(Realtime)
         install(Functions)

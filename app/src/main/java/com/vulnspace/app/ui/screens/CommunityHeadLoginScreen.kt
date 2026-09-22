@@ -6,7 +6,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -17,6 +19,7 @@ import com.vulnspace.app.ui.theme.*
 
 @Composable
 fun CommunityHeadLoginScreen(
+    onForceCreatePassword: () -> Unit,
     onSuccess: () -> Unit,
     onBack: () -> Unit,
     vm: CommunityHeadLoginViewModel = viewModel()
@@ -27,7 +30,7 @@ fun CommunityHeadLoginScreen(
         Column {
             CyberTopBar(
                 title = "Community Head Login",
-                subtitle = "Log in with your temporary or permanent password",
+                subtitle = "Sign in with Google OAuth or enter your password",
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Filled.ArrowBack, contentDescription = "Back") }
                 }
@@ -37,20 +40,64 @@ fun CommunityHeadLoginScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(32.dp),
+                    .padding(24.dp),
                 verticalArrangement = Arrangement.Center
             ) {
                 CyberCard {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text(
-                            text = "Access your console",
-                            style = MaterialTheme.typography.titleMedium
+                            text = "Coordinator Console Access",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
                         )
 
+                        // 1. Primary Action: Continue with Google
+                        SecondaryCyberButton(
+                            text = "Continue with Google",
+                            onClick = {
+                                vm.signInWithGoogle(
+                                    idToken = null,
+                                    onForceCreatePassword = onForceCreatePassword,
+                                    onSuccess = onSuccess
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !state.isGoogleLoading && !state.isLoading,
+                            leadingIcon = Icons.Filled.AccountCircle
+                        )
+
+                        if (state.isGoogleLoading) {
+                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = PrimaryBlue,
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        }
+
+                        // Divider with OR
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            HorizontalDivider(modifier = Modifier.weight(1f), color = BlueBorder)
+                            Text(
+                                text = "OR",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = TextSecondary,
+                                modifier = Modifier.padding(horizontal = 12.dp)
+                            )
+                            HorizontalDivider(modifier = Modifier.weight(1f), color = BlueBorder)
+                        }
+
+                        // 2. Secondary Action: Sign in with email and password
                         OutlinedCyberTextField(
                             value = state.email,
                             onValueChange = vm::onEmailChange,
-                            label = "Email",
+                            label = "Email Address",
                             leadingIcon = Icons.Filled.Email,
                             keyboardType = KeyboardType.Email
                         )
@@ -70,10 +117,15 @@ fun CommunityHeadLoginScreen(
                         }
 
                         PrimaryCyberButton(
-                            text = "Login",
-                            onClick = { vm.signIn(onSuccess) },
+                            text = "Login with Password",
+                            onClick = {
+                                vm.signInWithPassword(
+                                    onForceCreatePassword = onForceCreatePassword,
+                                    onSuccess = onSuccess
+                                )
+                            },
                             modifier = Modifier.fillMaxWidth(),
-                            enabled = state.email.isNotBlank() && state.password.isNotBlank() && !state.isLoading,
+                            enabled = state.email.isNotBlank() && state.password.isNotBlank() && !state.isLoading && !state.isGoogleLoading,
                             isLoading = state.isLoading,
                             leadingIcon = Icons.Filled.Login
                         )

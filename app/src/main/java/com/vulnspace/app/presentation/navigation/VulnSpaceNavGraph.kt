@@ -45,13 +45,17 @@ fun VulnSpaceNavGraph(
 
         is SessionState.Unauthenticated,
         is SessionState.AnonymousMemberWithoutCommunity -> {
-            AuthNavGraph(onSessionResolved = { sessionViewModel.resolveSession() })
+            AuthNavGraph(
+                onSessionResolved = { sessionViewModel.resolveSession() },
+                onSignOut = { sessionViewModel.signOut() }
+            )
         }
 
         is SessionState.HeadApplicationPending,
         is SessionState.PendingHeadApplication -> {
             AuthNavGraph(
                 onSessionResolved = { sessionViewModel.resolveSession() },
+                onSignOut = { sessionViewModel.signOut() },
                 startDestination = Destinations.HEAD_APPLICATION_PENDING
             )
         }
@@ -59,6 +63,7 @@ fun VulnSpaceNavGraph(
         is SessionState.HeadApplicationRejected -> {
             AuthNavGraph(
                 onSessionResolved = { sessionViewModel.resolveSession() },
+                onSignOut = { sessionViewModel.signOut() },
                 startDestination = Destinations.HEAD_APPLICATION_REJECTED
             )
         }
@@ -66,6 +71,7 @@ fun VulnSpaceNavGraph(
         is SessionState.HeadApprovedSetupRequired -> {
             AuthNavGraph(
                 onSessionResolved = { sessionViewModel.resolveSession() },
+                onSignOut = { sessionViewModel.signOut() },
                 startDestination = Destinations.COMMUNITY_SETUP
             )
         }
@@ -73,7 +79,8 @@ fun VulnSpaceNavGraph(
         is SessionState.MustChangePassword -> {
             AuthNavGraph(
                 onSessionResolved = { sessionViewModel.resolveSession() },
-                startDestination = Destinations.CREATE_NEW_PASSWORD
+                onSignOut = { sessionViewModel.signOut() },
+                startDestination = Destinations.CREATE_HEAD_PASSWORD
             )
         }
 
@@ -120,6 +127,7 @@ fun VulnSpaceNavGraph(
 @Composable
 private fun AuthNavGraph(
     onSessionResolved: () -> Unit,
+    onSignOut: () -> Unit = {},
     startDestination: String = Destinations.WELCOME
 ) {
     val navController = rememberNavController()
@@ -129,7 +137,8 @@ private fun AuthNavGraph(
                 onJoinCommunity = { navController.navigate(Destinations.JOIN_COMMUNITY) },
                 onApplyAsHead = { navController.navigate(Destinations.HEAD_APPLICATION_FORM) },
                 onHeadLogin = { navController.navigate(Destinations.COMMUNITY_HEAD_LOGIN) },
-                onAdminLogin = { navController.navigate(Destinations.PLATFORM_ADMIN_LOGIN) }
+                onAdminLogin = { navController.navigate(Destinations.PLATFORM_ADMIN_LOGIN) },
+                onCheckStatus = { navController.navigate(Destinations.HEAD_APPLICATION_PENDING) }
             )
         }
         composable(Destinations.PLATFORM_ADMIN_LOGIN) {
@@ -195,31 +204,42 @@ private fun AuthNavGraph(
                 state = formState,
                 onFieldChange = appVm::onFieldChange,
                 onSubmit = { 
-                    appVm.submitApplication(onSuccess = onSessionResolved) 
+                    appVm.submitApplication(onSuccess = {
+                        navController.navigate(Destinations.HEAD_APPLICATION_PENDING) {
+                            popUpTo(Destinations.HEAD_APPLICATION_FORM) { inclusive = true }
+                        }
+                    }) 
                 },
                 onBack = { navController.popBackStack() }
             )
         }
         composable(Destinations.HEAD_APPLICATION_PENDING) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Your head application is pending review.", style = MaterialTheme.typography.bodyLarge)
-            }
+            HeadApplicationStatusScreen(
+                onClaimSuccess = onSessionResolved,
+                onBack = { 
+                    navController.navigate(Destinations.WELCOME) {
+                        popUpTo(Destinations.WELCOME) { inclusive = true }
+                    }
+                }
+            )
         }
         composable(Destinations.HEAD_APPLICATION_REJECTED) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("Your head application was rejected.", style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.error)
-            }
+            HeadApplicationStatusScreen(
+                onClaimSuccess = onSessionResolved,
+                onBack = { 
+                    navController.navigate(Destinations.WELCOME) {
+                        popUpTo(Destinations.WELCOME) { inclusive = true }
+                    }
+                }
+            )
         }
         composable(Destinations.COMMUNITY_SETUP) {
-            val setupVm: CommunitySetupViewModel = viewModel()
-            val isLoading by setupVm.isLoading.collectAsStateWithLifecycle()
-            val error by setupVm.error.collectAsStateWithLifecycle()
-            
-            CommunitySetupScreen(
-                isLoading = isLoading,
-                errorMessage = error,
-                onSubmit = { name, desc ->
-                    setupVm.submitSetup(name, desc, onSuccess = onSessionResolved)
+            HeadApplicationStatusScreen(
+                onClaimSuccess = onSessionResolved,
+                onBack = { 
+                    navController.navigate(Destinations.WELCOME) {
+                        popUpTo(Destinations.WELCOME) { inclusive = true }
+                    }
                 }
             )
         }
@@ -227,18 +247,25 @@ private fun AuthNavGraph(
             val loginVm: CommunityHeadLoginViewModel = viewModel()
             CommunityHeadLoginScreen(
                 vm = loginVm,
+                onForceCreatePassword = {
+                    navController.navigate(Destinations.CREATE_HEAD_PASSWORD) {
+                        popUpTo(Destinations.COMMUNITY_HEAD_LOGIN) { inclusive = true }
+                    }
+                },
                 onSuccess = onSessionResolved,
                 onBack = { navController.popBackStack() }
             )
         }
+        composable(Destinations.CREATE_HEAD_PASSWORD) {
+            val pwdVm: CreateHeadPasswordViewModel = viewModel()
+            CreateHeadPasswordScreen(
+                vm = pwdVm,
+                onSuccess = onSessionResolved
+            )
+        }
         composable(Destinations.CREATE_NEW_PASSWORD) {
-            // Note: The userId comes from the session state MustChangePassword
-            // In a real app we could pass it down, but here it's already resolved in the session
-            // For now, let's just pass a dummy or get it from Supabase client directly
-            val userId = SupabaseApi.client.auth.currentUserOrNull()?.id ?: ""
-            val pwdVm: CreateNewPasswordViewModel = viewModel()
-            CreateNewPasswordScreen(
-                userId = userId,
+            val pwdVm: CreateHeadPasswordViewModel = viewModel()
+            CreateHeadPasswordScreen(
                 vm = pwdVm,
                 onSuccess = onSessionResolved
             )
@@ -357,11 +384,15 @@ private fun MemberNavGraph(
             }
             composable(Destinations.NOTIFICATIONS) {
                 val notificationsVm: NotificationsViewModel = viewModel()
-                LaunchedEffect(Unit) { notificationsVm.load() }
                 val notificationsState by notificationsVm.uiState.collectAsStateWithLifecycle()
                 NotificationsScreen(
                     notifications = notificationsState.notifications,
-                    isLoading = notificationsState.isLoading
+                    isLoading = notificationsState.isLoading,
+                    unreadCount = notificationsState.unreadCount,
+                    errorMessage = notificationsState.errorMessage,
+                    onRefresh = notificationsVm::load,
+                    onMarkRead = notificationsVm::markRead,
+                    onMarkAllRead = notificationsVm::markAllRead
                 )
             }
             composable(Destinations.PROFILE) {

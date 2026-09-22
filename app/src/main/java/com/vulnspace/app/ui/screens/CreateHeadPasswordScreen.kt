@@ -8,27 +8,27 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.vulnspace.app.presentation.viewmodel.CreateNewPasswordViewModel
+import com.vulnspace.app.presentation.viewmodel.CreateHeadPasswordViewModel
 import com.vulnspace.app.ui.components.*
 import com.vulnspace.app.ui.theme.*
 
 @Composable
-fun CreateNewPasswordScreen(
-    userId: String,
+fun CreateHeadPasswordScreen(
     onSuccess: () -> Unit,
-    vm: CreateNewPasswordViewModel = viewModel()
+    vm: CreateHeadPasswordViewModel = viewModel()
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
 
     Box(modifier = Modifier.fillMaxSize().background(AppBackground)) {
         Column {
             CyberTopBar(
-                title = "Create New Password",
-                subtitle = "Please set your permanent password",
+                title = "Set Permanent Password",
+                subtitle = "Required step for your Community Head account",
                 navigationIcon = null
             )
             HorizontalDivider(color = BlueBorder)
@@ -36,20 +36,27 @@ fun CreateNewPasswordScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(32.dp),
+                    .padding(24.dp),
                 verticalArrangement = Arrangement.Center
             ) {
                 CyberCard {
                     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text(
-                            text = "Mandatory Password Change",
-                            style = MaterialTheme.typography.titleMedium
+                            text = "Create Password",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Text(
+                            text = "Set a password so you can sign in with either Google OAuth or email and password going forward.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary
                         )
 
                         OutlinedCyberTextField(
                             value = state.newPassword,
                             onValueChange = vm::onNewPasswordChange,
-                            label = "New Password",
+                            label = "New Password (min 8 characters)",
                             leadingIcon = Icons.Filled.Lock,
                             keyboardType = KeyboardType.Password,
                             isPassword = true
@@ -70,8 +77,8 @@ fun CreateNewPasswordScreen(
                         }
 
                         PrimaryCyberButton(
-                            text = "Create Password",
-                            onClick = { vm.submitNewPassword(userId, onSuccess) },
+                            text = "Save Password & Continue",
+                            onClick = { vm.submitNewPassword(onSuccess) },
                             modifier = Modifier.fillMaxWidth(),
                             enabled = state.newPassword.isNotBlank() && state.confirmPassword.isNotBlank() && !state.isLoading,
                             isLoading = state.isLoading,

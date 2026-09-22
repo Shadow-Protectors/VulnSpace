@@ -40,12 +40,8 @@ data class AdminStats(
  */
 data class ApprovalResult(
     val communityName: String,
-    val applicantName: String,
-    val notificationStatus: String = "IN_APP_PENDING",
-    val oneTimePassword: String? = null
-) {
-    val inAppNotificationWasCreated: Boolean get() = notificationStatus == "IN_APP_CREATED"
-}
+    val applicantName: String
+)
 
 sealed interface DashboardState {
     data object Loading : DashboardState
@@ -481,67 +477,10 @@ private fun ApprovalCompletedCard(
             }
 
             Text(
-                "${result.applicantName} is now the Community Head. The community is ready to manage.",
+                "Application approved. The applicant will discover this in-app and can claim their community by signing in with their Google account.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextPrimary
             )
-
-            val inAppMessage = if (result.inAppNotificationWasCreated) {
-                "An in-app approval alert was created for the Community Head."
-            } else {
-                "In-app notification created for the applicant."
-            }
-            Text(inAppMessage, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
-
-            if (result.oneTimePassword != null) {
-                Text(
-                    "Share the temporary one-time password below with the Community Head:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WarningAmber
-                )
-            } else {
-                Text(
-                    "The Community Head can sign in using Community Head Login with their existing password.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
-                )
-            }
-
-            result.oneTimePassword?.let { password ->
-                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
-                var copied by remember { mutableStateOf(false) }
-
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = AppBackground,
-                    border = BorderStroke(1.dp, BlueBorder),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Temporary One-Time Password:", style = MaterialTheme.typography.labelSmall, color = PrimaryBlue)
-                            Spacer(Modifier.height(2.dp))
-                            Text(password, style = MaterialTheme.typography.titleSmall, color = TextPrimary, fontWeight = FontWeight.Bold)
-                        }
-                        IconButton(
-                            onClick = {
-                                clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(password))
-                                copied = true
-                            }
-                        ) {
-                            Icon(
-                                if (copied) Icons.Filled.Check else Icons.Filled.ContentCopy,
-                                contentDescription = "Copy password",
-                                tint = if (copied) SuccessGreen else PrimaryBlue
-                            )
-                        }
-                    }
-                }
-            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onDismiss) { Text("Done") }

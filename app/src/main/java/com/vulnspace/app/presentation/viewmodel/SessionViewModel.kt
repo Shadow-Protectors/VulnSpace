@@ -4,10 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.vulnspace.app.data.supabase.SupabaseApi
 import com.vulnspace.app.presentation.navigation.SessionState
+import io.github.jan.supabase.functions.functions
 import io.github.jan.supabase.gotrue.auth
 import io.github.jan.supabase.postgrest.postgrest
+import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -15,7 +18,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class SessionViewModel : ViewModel() {
 
     private val _sessionState = MutableStateFlow<SessionState>(SessionState.LoadingSession)
-    val sessionState: StateFlow<SessionState> = _sessionState
+    val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
 
     init {
         resolveSession()
@@ -37,24 +40,6 @@ class SessionViewModel : ViewModel() {
                 
                 val email = session.user?.email ?: ""
 
-                // 0. Check if user must change password (for Community Heads on first login)
-                try {
-                    val profileResult = SupabaseApi.client.postgrest["profiles"]
-                        .select { filter { eq("id", userId) } }
-                        .decodeList<JsonObject>()
-                        
-                    if (profileResult.isNotEmpty()) {
-                        val profile = profileResult.first()
-                        val mustChange = profile["must_change_password"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
-                        if (mustChange) {
-                            _sessionState.value = SessionState.MustChangePassword(userId = userId, email = email)
-                            return@launch
-                        }
-                    }
-                } catch (_: Exception) {
-                    // Ignore profile read errors for admin accounts that may not have a profile row
-                }
-
                 // 1. Check if platform admin (most privileged — checked first)
                 val isPlatformAdmin = try {
                     com.vulnspace.app.data.repository.AdminAuthorizationRepository().isPlatformAdmin()
@@ -67,13 +52,39 @@ class SessionViewModel : ViewModel() {
                     return@launch
                 }
 
-                // 2. Check community membership (active only — REMOVED members lose access)
-                val memberResult = SupabaseApi.client.postgrest["community_members"]
+                // 2. Check community membership (active only)
+                var memberResult = SupabaseApi.client.postgrest["community_members"]
                     .select { filter { eq("user_id", userId); eq("status", "ACTIVE") } }
                     .decodeList<JsonObject>()
 
+                // 3. If no active community membership, check for an unclaimed grant via Edge Function
                 if (memberResult.isEmpty()) {
-                    // 3. Authenticated but not in a community. Check if they have a Head Application.
+                    try {
+                        val claimResponse = SupabaseApi.client.functions.invoke(
+                            function = "claim-head-grant"
+                        )
+                        val claimText = claimResponse.bodyAsText()
+                        val isClaimed = claimText.contains("\"claimed\":true")
+                        val alreadyHead = claimText.contains("\"already_head\":true")
+                        val isPasswordConfigured = claimText.contains("\"password_configured\":true")
+
+                        if (isClaimed || alreadyHead) {
+                            if (!isPasswordConfigured) {
+                                _sessionState.value = SessionState.MustChangePassword(userId = userId, email = email)
+                                return@launch
+                            }
+                            // Re-fetch membership after claim
+                            memberResult = SupabaseApi.client.postgrest["community_members"]
+                                .select { filter { eq("user_id", userId); eq("status", "ACTIVE") } }
+                                .decodeList<JsonObject>()
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.d("SessionViewModel", "claim-head-grant check: ${e.message}")
+                    }
+                }
+
+                if (memberResult.isEmpty()) {
+                    // 4. Authenticated but not in a community. Check if they have a legacy Head Application.
                     val appResult = SupabaseApi.client.postgrest["head_applications"]
                         .select { filter { eq("applicant_user_id", userId) } }
                         .decodeList<JsonObject>()
@@ -85,10 +96,6 @@ class SessionViewModel : ViewModel() {
                         when (status) {
                             "PENDING" -> _sessionState.value = SessionState.HeadApplicationPending
                             "REJECTED" -> _sessionState.value = SessionState.HeadApplicationRejected
-                            // Note: APPROVED without membership is a transient state before community is fully set up,
-                            // or they haven't logged in with the temp credential yet.
-                            // If they are logged in and must change password, we already caught it in step 0.
-                            // If they are somehow here, they have no membership.
                             else -> _sessionState.value = SessionState.AnonymousMemberWithoutCommunity
                         }
                         return@launch
@@ -110,8 +117,26 @@ class SessionViewModel : ViewModel() {
                     return@launch
                 }
 
-                // 4. Check if community head (supports both HEAD and COMMUNITY_HEAD)
+                // 5. Check if community head
                 if (role == "COMMUNITY_HEAD" || role == "HEAD") {
+                    // Check if password_configured is false for this Community Head
+                    try {
+                        val profileResult = SupabaseApi.client.postgrest["profiles"]
+                            .select { filter { eq("id", userId) } }
+                            .decodeList<JsonObject>()
+
+                        if (profileResult.isNotEmpty()) {
+                            val profile = profileResult.first()
+                            val isPasswordConfigured = profile["password_configured"]?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false
+                            if (!isPasswordConfigured) {
+                                _sessionState.value = SessionState.MustChangePassword(userId = userId, email = email)
+                                return@launch
+                            }
+                        }
+                    } catch (_: Exception) {
+                        // Ignore profile read errors
+                    }
+
                     _sessionState.value = SessionState.CommunityHead(
                         userId = userId,
                         communityId = communityId,
@@ -120,7 +145,7 @@ class SessionViewModel : ViewModel() {
                     return@launch
                 }
 
-                // 5. Regular member
+                // 6. Regular member
                 _sessionState.value = SessionState.Member(
                     userId = userId,
                     communityId = communityId,
@@ -129,7 +154,6 @@ class SessionViewModel : ViewModel() {
 
             } catch (e: Exception) {
                 e.printStackTrace()
-                // Resolve as unauthenticated on error to keep the user in a safe state
                 _sessionState.value = SessionState.Unauthenticated
             }
         }

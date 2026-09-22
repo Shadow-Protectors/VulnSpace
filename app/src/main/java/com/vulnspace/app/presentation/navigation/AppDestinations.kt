@@ -43,6 +43,7 @@ object Destinations {
     
     // Head Authentication
     const val COMMUNITY_HEAD_LOGIN = "community_head_login"
+    const val CREATE_HEAD_PASSWORD = "create_head_password"
     const val CREATE_NEW_PASSWORD = "create_new_password"
 
     // Community Head Console

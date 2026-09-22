@@ -50,6 +50,7 @@ data class AppNotification(
     val title: String = "",
     val body: String = "",
     val type: String? = null,
+    @SerialName("dedupe_key") val dedupeKey: String? = null,
     @SerialName("read_at") val readAt: String? = null,
     @SerialName("created_at") val createdAt: String = ""
 ) {

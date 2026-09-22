@@ -69,5 +69,13 @@ supabase/
 .env
 local.properties
 *.apk
+apk/
 build/
 app/build/
+corrections/
+
+# Node
+node_modules/
+package-lock.json
+package.json
+

@@ -295,18 +295,15 @@ class AdminViewModel : ViewModel() {
                 // Eagerly remove the item from pending list
                 _applications.value = _applications.value.filter { it.id != applicationId }
 
-                // The Edge Function only reports success after the community, head membership,
-                // and approval record are complete. Its response also tells us whether the
-                // durable in-app approval alert was created and whether email was delivered.
-                val manualOtp = responseString(responseText, "one_time_password")
-                val notificationStatus = responseString(responseText, "notification_status") ?: "IN_APP_PENDING"
+                // Set approval result for admin confirmation display
+                val commName = responseString(responseText, "communityName")
+                    ?: responseString(responseText, "community_name")
+                    ?: approvedApplication?.proposed_community_name
+                    ?: "Approved community"
+
                 _approvalResult.value = ApprovalResult(
-                    communityName = responseString(responseText, "community_name")
-                        ?: approvedApplication?.proposed_community_name
-                        ?: "Approved community",
-                    applicantName = approvedApplication?.full_name ?: "The applicant",
-                    notificationStatus = notificationStatus,
-                    oneTimePassword = manualOtp
+                    communityName = commName,
+                    applicantName = approvedApplication?.full_name ?: "The applicant"
                 )
 
                 // Refresh all related records fresh from database
